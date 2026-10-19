@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CT Pianificatore cantieri</title>
+  <!-- ?v= : forza il browser a riprendere CSS/JS aggiornati (niente versioni vecchie in cache) -->
+  <link rel="icon" href="img/logo.png?v=2" />
+  <link rel="stylesheet" href="css/style.css?v=2" />
+</head>
+<body data-versione="2">
+
+<!-- ── Login ──────────────────────────────────────────────────────────────── -->
+<div id="schermo-login" class="schermo" hidden>
+  <form id="form-login" class="scheda-login" autocomplete="on">
+    <img src="img/logo.png?v=2" alt="" class="logo-login" />
+    <h1>Pianificatore cantieri</h1>
+    <p class="sotto">Carpenteria Ticinese · solo titolare e responsabile</p>
+    <div id="login-messaggio" class="messaggio" role="alert" hidden></div>
+    <label for="login-email">Email</label>
+    <input id="login-email" type="email" autocomplete="username" required />
+    <label for="login-password">Password</label>
+    <input id="login-password" type="password" autocomplete="current-password" required />
+    <button type="submit" class="primario grande">Entra</button>
+  </form>
+</div>
+
+<!-- ── Schermata di blocco (accesso negato, SQL mancante, errore di lettura) ── -->
+<div id="schermo-blocco" class="schermo" hidden>
+  <div class="scheda-login">
+    <h1 id="blocco-titolo">Accesso non possibile</h1>
+    <p id="blocco-testo"></p>
+    <div class="riga-bottoni">
+      <button id="blocco-riprova" class="primario">Riprova</button>
+      <button id="blocco-esci">Esci</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── App ────────────────────────────────────────────────────────────────── -->
+<div id="app" hidden>
+  <header id="barra" aria-label="Barra comandi">
+    <div class="marchio"><img src="img/logo.png?v=2" alt="" /> <span>Pianificatore</span></div>
+
+    <div class="segmenti" role="group" aria-label="Vista">
+      <button type="button" class="seg" data-vista="cantieri" aria-pressed="true">🏗️ Cantieri</button>
+      <button type="button" class="seg" data-vista="persone" aria-pressed="false">👷 Persone</button>
+    </div>
+
+    <div class="segmenti" role="group" aria-label="Zoom">
+      <button type="button" class="seg" data-zoom="settimana">Settimana</button>
+      <button type="button" class="seg" data-zoom="mese">Mese</button>
+      <button type="button" class="seg" data-zoom="3mesi">3 mesi</button>
+    </div>
+
+    <div class="segmenti" role="group" aria-label="Periodo">
+      <button type="button" id="btn-indietro" title="Periodo precedente">◀ Indietro</button>
+      <button type="button" id="btn-oggi">Oggi</button>
+      <button type="button" id="btn-avanti" title="Periodo successivo">Avanti ▶</button>
+    </div>
+
+    <div id="titolo-periodo" aria-live="polite"></div>
+
+    <div class="azioni-barra">
+      <button type="button" id="btn-nuova" class="primario">+ Nuova commessa</button>
+      <button type="button" id="btn-avvisi">🔔 Avvisi <span id="cont-avvisi" class="contatore">0</span></button>
+      <button type="button" id="btn-impostazioni">⚙️ Impostazioni</button>
+      <button type="button" id="btn-esci" title="Esci dal Pianificatore">Esci</button>
+    </div>
+  </header>
+
+  <div id="avviso-meteo" class="striscia-avviso" hidden></div>
+  <div id="avviso-titolare" class="striscia-avviso" hidden></div>
+
+  <main id="pagina-piano">
+    <div id="contenitore-griglia" aria-label="Piano">
+      <div id="griglia"></div>
+    </div>
+    <aside id="coda" aria-label="Riparazioni in coda">
+      <h2>🔧 Riparazioni in coda</h2>
+      <p class="aiuto">Riparazioni confermate senza date. Trascinale in una cella libera (vista Persone).</p>
+      <div id="coda-lista"></div>
+    </aside>
+  </main>
+
+  <main id="pagina-impostazioni" hidden></main>
+</div>
+
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script src="js/config.js?v=2"></script>
+<script src="js/calcoli.js?v=2"></script>
+<script src="js/viaggio.js?v=2"></script>
+<script src="js/dati.js?v=2"></script>
+<script src="js/app.js?v=2"></script>
+</body>
+</html>
