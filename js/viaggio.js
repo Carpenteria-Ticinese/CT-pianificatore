@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   Pianificatore cantieri — CALCOLO DEL VIAGGIO
+   Calendario (pianificatore cantieri) — CALCOLO DEL VIAGGIO
    Gratis, senza chiave, nessun servizio Google a pagamento.
    - Indirizzo → coordinate: Nominatim (OpenStreetMap), massimo 1 richiesta al secondo
    - Coordinate → percorso: OSRM, server pubblico router.project-osrm.org, auto

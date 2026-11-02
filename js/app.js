@@ -1,9 +1,12 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   Pianificatore cantieri — APP (pagina)
+   Calendario (pianificatore cantieri) — APP (pagina)
    I calcoli stanno in calcoli.js (PLC), il database in dati.js (PLD).
    Qui: disegno delle viste, pannelli, scheda commessa, avvisi, impostazioni.
    Regola: AVVISA, NON BLOCCA MAI. Ogni modifica che tocca più giorni si
    conferma prima.
+   Commesse: nome, numero, indirizzo e stato si LEGGONO da Anagrafiche (tabella
+   cantieri) e non si scrivono mai; pl_commesse tiene solo il piano. Persone:
+   lette da operai (escluse quelle con fine rapporto passata).
    ═══════════════════════════════════════════════════════════════════════════ */
 'use strict'
 var C = window.PLC, V = window.PLViaggio, D = window.PLD
@@ -16,7 +19,9 @@ var ST = {
 }
 var PALETTE = ['#2d6a4f', '#1d4ed8', '#b45309', '#7c3aed', '#be123c', '#0f766e', '#4d7c0f', '#c2410c', '#0369a1', '#a21caf']
 var STAZIONI = { MAG: 'Magadino', LUG: 'Lugano' }
-var STATI = ['Bozza', 'Confermato', 'In corso', 'Finito']
+// Stato del PIANO (pl_commesse.stato). «In corso» della commessa si legge da
+// Anagrafiche (cantieri.stato_commessa): qui non si propone più.
+var STATI_PIANO = ['Bozza', 'Confermato', 'Finito']
 
 // ── Utilità ─────────────────────────────────────────────────────────────────
 function $(id) { return document.getElementById(id) }
@@ -127,8 +132,8 @@ async function entraNellApp() {
   try {
     var acc = await D.controllaAccesso()
     if (!acc.ok) {
-      if (acc.motivo === 'sql') mostraBlocco('Database non pronto', 'Manca lo SQL del Pianificatore. Va lanciato in Supabase → SQL Editor il file sql/da_applicare/PL_01_tabelle.sql, poi Ctrl+F5. (' + (acc.dettaglio || '') + ')')
-      else mostraBlocco('Accesso riservato', 'Il Pianificatore è solo per titolare e responsabile. Il profilo di questo utente non lo permette: il piano non viene mostrato.')
+      if (acc.motivo === 'sql') mostraBlocco('Database non pronto', 'Manca lo SQL del Calendario (PL_01, tabelle pl_). Va applicato nel database, poi Ctrl+F5. (' + (acc.dettaglio || '') + ')')
+      else mostraBlocco('Accesso riservato', 'Il Calendario è solo per titolare e responsabile. Il profilo di questo utente non lo permette: il piano non viene mostrato.')
       return
     }
     ST.profilo = acc.profilo
@@ -150,7 +155,8 @@ var TABELLE = {
   commesse: ['pl_commesse', '*', 'numero'], capitoli: ['pl_capitoli', '*', 'commessa_id,ordine'],
   assegnazioni: ['pl_assegnazioni', '*', 'data,posizione'], previste: ['pl_assegnazioni_previste', '*', 'data'],
   assenze: ['pl_assenze', '*', 'dal'], chiusure: ['pl_chiusure', '*', 'dal'], festivi: ['pl_festivi', '*', 'data'],
-  periodi: ['pl_periodi_inverno', '*', 'anno']
+  periodi: ['pl_periodi_inverno', '*', 'anno'],
+  cantieri: ['cantieri', D.COLONNE_CANTIERI, 'nome'], operai: ['operai', D.COLONNE_OPERAI, 'cognome']
 }
 async function ricarica(nomi) {
   var r = await Promise.all(nomi.map(function (n) { var t = TABELLE[n]; return D.leggi(t[0], t[1], t[2]) }))
@@ -172,11 +178,12 @@ async function ricaricaIgnorati() {
 function nomeOperaio(o) { return ((o.nome || '') + ' ' + (o.cognome || '')).trim() || 'Senza nome' }
 function ricostruisci() {
   var d = ST.dati
+  C.unisciCantieri(d.commesse, d.cantieri)        // nome, numero, indirizzo, stato da Anagrafiche
   ST.cal = C.creaCalendario({ imp: d.imp, periodiInverno: d.periodi, festivi: d.festivi, chiusure: d.chiusure })
   ST.nomi = {}
   d.operai.forEach(function (o) { ST.nomi[o.id] = nomeOperaio(o) })
   var oggi = C.oggiIso()
-  ST.persone = d.operai.filter(function (o) { return o.attivo !== false && (!o.data_fine_rapporto || o.data_fine_rapporto >= oggi) })
+  ST.persone = C.personeAttive(d.operai, oggi)
     .map(function (o) { return { id: o.id, nome: ST.nomi[o.id], data_fine_rapporto: o.data_fine_rapporto } })
     .sort(function (a, b) { return a.nome.localeCompare(b.nome) })
   ST.titolariMancanti = titolariNonInOperai()
@@ -202,6 +209,7 @@ function titolariNonInOperai() {
   var attivi = ST.persone.map(function (p) { return ST.dati.operai.find(function (o) { return o.id === p.id }) })
   return (ST.dati.profili || []).filter(function (p) { return p.ruolo === 'titolare' }).filter(function (p) {
     return !attivi.some(function (o) {
+      if (o.user_id && o.user_id === p.id) return true
       if (p.id === (ST.profilo && ST.profilo.id) && o.email && ST.email && o.email.toLowerCase() === ST.email.toLowerCase()) return true
       var n = normNome(p.nome)
       return n && (n === normNome(o.nome + ' ' + o.cognome) || n === normNome(o.cognome + ' ' + o.nome))
@@ -230,7 +238,10 @@ function disegna() {
   var tit = $('avviso-titolare')
   tit.hidden = !ST.titolariMancanti.length
   tit.textContent = '👷 Il titolare (' + ST.titolariMancanti.join(', ') + ') non risulta fra gli operai attivi, quindi non compare nella vista Persone. ' +
-    'Va aggiunto nell\'App Cantieri → Collaboratori, con lo stesso nome o la stessa email.'
+    'Va aggiunto in Anagrafiche → Persone (oggi: App Cantieri → Collaboratori), con lo stesso nome o collegato al suo accesso.'
+  var db = $('avviso-db')
+  db.hidden = ST.dati.versioneDb >= 2
+  db.textContent = '🗄️ Database non aggiornato: manca l’SQL PL_02. Il piano si vede e si modifica, ma «Pianifica commessa» non è ancora disponibile.'
   if (ST.pagina === 'piano') { disegnaGriglia(); disegnaCoda() } else disegnaImpostazioni()
 }
 function titoloPeriodo() {
@@ -267,7 +278,7 @@ function disegnaGriglia() {
   h += '</tr></thead><tbody>'
   var righe = ST.vista === 'cantieri' ? righeCantieri(giorni, oggi) : righePersone(giorni, oggi)
   if (!righe) righe = '<tr><td class="testa vuoto-griglia" colspan="' + (giorni.length + 1) + '">' +
-    (ST.vista === 'cantieri' ? 'Nessuna commessa da mostrare. Premi «+ Nuova commessa».' : 'Nessuna persona attiva nella tabella operai.') + '</td></tr>'
+    (ST.vista === 'cantieri' ? 'Nessuna commessa da mostrare. Premi «📋 Pianifica commessa».' : 'Nessuna persona attiva (tabella operai).') + '</td></tr>'
   $('griglia').innerHTML = h + righe + '</tbody></table>'
 }
 function commesseDaMostrare(giorni) {
@@ -276,7 +287,7 @@ function commesseDaMostrare(giorni) {
     var a = ST.assPer[c.id] || []
     var nelPeriodo = a.some(function (x) { return x.data >= dal && x.data <= al })
     if (c.interna) return nelPeriodo
-    if (c.stato === 'Finito') return nelPeriodo
+    if (C.commessaChiusa(c)) return nelPeriodo        // Finito nel piano, o Persa / Conclusa in Anagrafiche
     if (c.tipo === 'Riparazione' && c.stato === 'Confermato' && !a.length) return false // sta nella coda
     return true
   }).sort(function (x, y) {
@@ -297,7 +308,7 @@ function righeCantieri(giorni, oggi) {
       (r.residue > 1e-9 ? ' · mancano ' + fOre(r.residue) : r.residue < -1e-9 ? ' · ' + fOre(-r.residue) + ' oltre' : r.fine ? ' · fine ' + C.fmtGiorno(r.fine) : ''))
     h += '<tr data-riga="' + c.id + '"><td class="testa"><button type="button" class="link" data-apri-commessa="' + c.id + '">' +
       '<span class="pallino" style="background:' + col + '"></span><span class="num">' + esc(c.numero) + '</span> ' + esc(c.nome) +
-      ' <span class="stato">' + esc(c.stato) + (c.tipo === 'Riparazione' ? ' · Riparazione' : '') + '</span>' +
+      ' <span class="stato">' + esc(etichettaStato(c)) + (c.tipo === 'Riparazione' ? ' · Riparazione' : '') + '</span>' +
       '<span class="sottoriga">' + esc(sotto) + '</span></button></td>'
     giorni.forEach(function (d) {
       var info = C.infoGiorno(ST.cal, d)
@@ -334,6 +345,16 @@ function righeCantieri(giorni, oggi) {
     h += '</tr>'
   })
   return h
+}
+// Stato mostrato nella riga: quello della commessa in Anagrafiche, più lo stato del
+// piano quando conta (Bozza / Finito). Righe vecchie: lo stato del piano + «da collegare».
+function etichettaStato(c) {
+  if (c.interna) return 'interna'
+  if (!c.collegata) return c.stato + ' · da collegare'
+  var s = c.stato_commessa || 'senza stato'
+  if (c.stato === 'Bozza') s += ' · piano in bozza'
+  else if (c.stato === 'Finito') s += ' · piano finito'
+  return s
 }
 function righePersone(giorni, oggi) {
   var dal = giorni[0], al = giorni[giorni.length - 1]
@@ -515,7 +536,7 @@ function apriAssegna(p) {
   var info = C.infoGiorno(ST.cal, data)
   var statoForm = { ore: null, modo: 'intera' }
   function commesseScelta() {
-    return ST.dati.commesse.filter(function (c) { return c.stato !== 'Finito' || c.id === p.commessa_id })
+    return ST.dati.commesse.filter(function (c) { return !C.commessaChiusa(c) || c.id === p.commessa_id })
       .sort(function (a, b) { return a.numero.localeCompare(b.numero) })
   }
   function disegnaPannello() {
@@ -618,20 +639,83 @@ function apriAssegna(p) {
 }
 
 // ── Scheda commessa ─────────────────────────────────────────────────────────
-function numeroProposto() {
-  var aa = String(new Date().getFullYear()).slice(2)
-  var max = 0
-  ST.dati.commesse.forEach(function (c) { if (c.numero.slice(0, 2) === aa) max = Math.max(max, +c.numero.slice(3)) })
-  return aa + '-' + String(max + 1).padStart(3, '0')
-}
 function apriCommessa(id) {
-  var c = id ? ST.perId[id] : null
-  var nuova = !c
-  if (nuova) c = { numero: numeroProposto(), nome: '', indirizzo: '', tipo: 'Cantiere', stato: 'Bozza', riduzione_ore: 0, venerdi_regola: "Un'ora in meno", colore: PALETTE[ST.dati.commesse.length % PALETTE.length], margine_x_giorni: 0, margini_accettati: {} }
-  var w = apriFinestra(nuova ? 'Nuova commessa' : c.numero + ' · ' + c.nome, { centro: true })
-  w.commessaId = c.id || null
+  var c = ST.perId[id]
+  if (!c) { mostraErrore('Commessa non trovata nel piano. Ricarica la pagina.'); return null }
+  var w = apriFinestra(c.numero + ' · ' + c.nome, { centro: true })
+  w.commessaId = c.id
   disegnaScheda(w, c)
   return w
+}
+
+// ── «Pianifica commessa»: si sceglie fra le commesse di Anagrafiche ──────────
+// Stato Da fare / Inviata / In corso, non ancora nel Calendario. Si crea SOLO la
+// riga del piano (cantiere_id, tipo, stato del piano, colore): nome, numero e
+// indirizzo restano in Anagrafiche.
+async function apriPianifica() {
+  if (!(ST.dati.versioneDb >= 2)) {
+    mostraErrore('«Pianifica commessa» non è ancora disponibile: nel database manca l’SQL PL_02 (commesse da Anagrafiche). Niente è stato creato. Il resto del Calendario funziona.')
+    return
+  }
+  await ricarica(['cantieri', 'commesse'])          // l'elenco più recente di Anagrafiche
+  var w = apriFinestra('📋 Pianifica commessa', { centro: true })
+  var tipo = 'Cantiere'
+  function disegnaElenco() {
+    var pc = C.commessePianificabili(ST.dati.cantieri, ST.dati.commesse)
+    var testo = (w.corpo.querySelector('#pc-cerca') || {}).value || ''
+    var lista = pc.lista.filter(function (k) { return C.cercaCantiere(k, testo) })
+    var el = w.corpo.querySelector('#pc-lista')
+    var senza = pc.listaSenzaStato.filter(function (k) { return C.cercaCantiere(k, testo) })
+    function voce(k, senzaStato) {
+      var ind = C.indirizzoCantiere(k)
+      var vecchio = C.pulito ? C.pulito(k.stato) : String(k.stato || '').trim()
+      return '<button type="button" class="voce-commessa' + (senzaStato ? ' senza-stato' : '') + '" data-scegli="' + k.id + '">' +
+        '<span class="vc-riga"><span class="num">' + esc(k.numero_commessa || 'senza numero') + '</span> <strong>' + esc(k.nome) + '</strong></span>' +
+        '<span class="vc-sotto">' + (senzaStato
+          ? '<span class="badge-stato senza">⚠️ ' + esc(C.TESTO_SENZA_STATO) + '</span>' + (vecchio ? ' <span class="stato-prima">prima: ' + esc(vecchio) + '</span>' : '')
+          : '<span class="badge-stato">' + esc(k.stato_commessa) + '</span>') +
+        (ind ? ' ' + esc(ind) : ' <em>indirizzo mancante</em>') + '</span></button>'
+    }
+    if (!pc.lista.length && !pc.listaSenzaStato.length) el.innerHTML = '<div class="esito attenzione">Nessuna commessa da pianificare: in Anagrafiche non ci sono commesse «Da fare», «Inviata» o «In corso» che non siano già nel Calendario.</div>'
+    else if (!lista.length && !senza.length) el.innerHTML = '<div class="esito attenzione">Nessuna commessa con «' + esc(testo) + '».</div>'
+    else el.innerHTML = lista.map(function (k) { return voce(k, false) }).join('') +
+      (senza.length ? '<h4 class="gruppo-senza-stato">⚠️ ' + esc(C.TESTO_SENZA_STATO) + ' (' + senza.length + ')</h4>' +
+        '<p class="aiuto">Queste commesse non hanno ancora lo stato. Si può pianificarle lo stesso; lo stato si mette in Anagrafiche e poi questo gruppo sparisce da solo.</p>' +
+        senza.map(function (k) { return voce(k, true) }).join('') : '')
+    w.corpo.querySelector('#pc-nota').textContent = 'Elenco da Anagrafiche: ' + pc.lista.length + ' con stato' + (pc.listaSenzaStato.length ? ' + ' + pc.listaSenzaStato.length + ' senza stato' : '') +
+      ' · ' + pc.giaPianificate + ' già nel Calendario' + (pc.altriStati ? ' · ' + pc.altriStati + ' Perse o Concluse (non compaiono)' : '') +
+      '. Con stato: «Da fare», «Inviata» o «In corso».'
+    el.querySelectorAll('[data-scegli]').forEach(function (b) {
+      b.addEventListener('click', function () { esegui(function () { return creaPiano(b.dataset.scegli) }) })
+    })
+  }
+  async function creaPiano(cantiereId) {
+    var k = ST.dati.cantieri.find(function (x) { return x.id === cantiereId })
+    if (!k) return
+    if (!await conferma('Pianificare <strong>' + esc((k.numero_commessa || '') + ' ' + k.nome) + '</strong> come <strong>' + esc(tipo) + '</strong>?<br>Il piano parte in «Bozza». Nome, numero e indirizzo restano quelli di Anagrafiche.', { si: 'Pianifica' })) return
+    var colore = PALETTE[ST.dati.commesse.length % PALETTE.length]
+    var nuova = (await D.inserisci('pl_commesse', { cantiere_id: k.id, tipo: tipo, stato: 'Bozza', colore: colore }))[0]
+    w.chiudi()
+    await ricarica(['commesse'])
+    toast((k.numero_commessa || k.nome) + ': piano creato in Bozza')
+    apriCommessa(nuova.id)
+  }
+  w.corpo.innerHTML = '<p class="aiuto">Le commesse si creano e si cambiano in Anagrafiche. Qui scegli quale pianificare.</p>' +
+    '<div class="campi">' + campo('Cerca (numero, nome, località)', '<input id="pc-cerca" type="search" autocomplete="off" placeholder="es. 26-012 o Bellinzona">') +
+    '<div class="campo"><label>Tipo di piano</label><div class="rapidi" id="pc-tipo">' +
+    '<button type="button" data-tipo="Cantiere" class="attivo">🏗️ Cantiere</button><button type="button" data-tipo="Riparazione">🔧 Riparazione</button></div></div></div>' +
+    '<div id="pc-lista" class="lista-commesse"></div><p class="aiuto" id="pc-nota"></p>' +
+    '<div class="riga-bottoni"><button type="button" id="pc-chiudi">Chiudi</button></div>'
+  w.corpo.querySelector('#pc-cerca').addEventListener('input', disegnaElenco)
+  w.corpo.querySelector('#pc-chiudi').addEventListener('click', w.chiudi)
+  w.corpo.querySelectorAll('[data-tipo]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      tipo = b.dataset.tipo
+      w.corpo.querySelectorAll('[data-tipo]').forEach(function (x) { x.classList.toggle('attivo', x === b) })
+    })
+  })
+  disegnaElenco()
+  w.corpo.querySelector('#pc-cerca').focus()
 }
 function riapriScheda(w) {
   var c = ST.perId[w.commessaId]
@@ -641,22 +725,18 @@ function riapriScheda(w) {
 }
 function opzioniSel(lista, val) { return lista.map(function (x) { return '<option' + (x === val ? ' selected' : '') + '>' + esc(x) + '</option>' }).join('') }
 function disegnaScheda(w, c) {
-  var nuova = !c.id
   var rid = Number(c.riduzione_ore || 0)
   var ridStd = [0, 0.5, 1].indexOf(rid) >= 0
-  var h = '<div class="sezione"><h3>Dati</h3><div class="campi">' +
-    campo('Numero (AA-NNN)', '<input id="sc-numero" value="' + esc(c.numero) + '" placeholder="26-014" maxlength="6">') +
-    campo('Nome', '<input id="sc-nome" value="' + esc(c.nome) + '">') +
-    campo('Indirizzo', '<input id="sc-indirizzo" value="' + esc(c.indirizzo || '') + '" placeholder="Via, NPA Località">') +
-    campo('Tipo', '<select id="sc-tipo">' + opzioniSel(['Cantiere', 'Riparazione'], c.tipo) + '</select>') +
+  var statiPiano = STATI_PIANO.indexOf(c.stato) >= 0 ? STATI_PIANO : STATI_PIANO.concat([c.stato])   // «In corso» vecchio: resta visibile
+  var h = sezioneAnagrafica(c) +
+    '<div class="sezione"><h3>🗓️ Piano</h3><div class="campi">' +
+    campo('Tipo di piano', '<select id="sc-tipo">' + opzioniSel(['Cantiere', 'Riparazione'], c.tipo) + '</select>') +
     campoOreStimate(c) +
-    campo('Stato', '<select id="sc-stato">' + opzioniSel(STATI, c.stato) + '</select>') +
+    campo('Stato del piano', '<select id="sc-stato">' + opzioniSel(statiPiano, c.stato) + '</select>') +
     campo('Data inizio prevista', '<input id="sc-inizio" type="date" value="' + esc(c.data_inizio || '') + '">') +
     campo('Persone previste', '<input id="sc-persone" type="text" inputmode="numeric" value="' + esc(c.persone_previste || '') + '">', 'persone') +
     campo('Colore nel piano', '<input id="sc-colore" type="color" value="' + esc(c.colore || '#2d6a4f') + '">') +
-    campo('Cantiere nell\'App Cantieri (facoltativo)', '<select id="sc-cantiere"><option value="">— nessuno —</option>' + ST.dati.cantieri.map(function (x) {
-      return '<option value="' + x.id + '"' + (x.id === c.cantiere_id ? ' selected' : '') + '>' + esc(x.nome) + (x.citta ? ' · ' + esc(x.citta) : '') + '</option>' }).join('') + '</select>') +
-    '</div></div>'
+    '</div><p class="aiuto">Stato del piano: Bozza = in preparazione · Confermato = si salva la copia «previsto» · Finito = lavori finiti. Lo stato della commessa (Da fare, In corso…) si cambia in Anagrafiche.</p></div>'
 
   h += '<div class="sezione"><h3>🚗 Viaggio (andata)</h3><div class="campi">' +
     campo('Minuti di viaggio, andata', '<input id="sc-viaggio" type="text" inputmode="numeric" value="' + esc(c.viaggio_min_andata === null || c.viaggio_min_andata === undefined ? '' : c.viaggio_min_andata) + '">', 'min') +
@@ -664,7 +744,7 @@ function disegnaScheda(w, c) {
     campo('Fonte', '<input id="sc-fonte" value="' + esc(c.viaggio_fonte || '—') + '" readonly>') +
     '</div><div class="riga-bottoni"><button type="button" id="sc-calcola">🧭 Calcola viaggio</button>' +
     '<a id="sc-mappa" href="' + esc(V.linkMappa(c.indirizzo)) + '" target="_blank" rel="noopener">🗺️ Controlla su mappa (traffico vero) ↗</a></div>' +
-    '<p class="aiuto">Partenza: ' + esc(V.PARTENZA) + '. Calcolo gratis con OpenStreetMap; minuti × ' + f(ST.dati.imp.fattore_ora_punta, 2) + ' per l\'ora di punta. Se cambi i minuti a mano, vince il tuo valore.</p>' +
+    '<p class="aiuto">Arrivo: ' + (c.indirizzo ? esc(c.indirizzo) : '<strong>indirizzo mancante</strong> (si mette in Anagrafiche)') + '. Partenza: ' + esc(V.PARTENZA) + '. Calcolo gratis con OpenStreetMap; minuti × ' + f(ST.dati.imp.fattore_ora_punta, 2) + ' per l\'ora di punta. Se cambi i minuti a mano, vince il tuo valore.</p>' +
     '<div id="sc-viaggio-esito"></div></div>'
 
   h += '<div class="sezione"><h3>🕘 Giornata</h3><div class="campi">' +
@@ -673,17 +753,38 @@ function disegnaScheda(w, c) {
     campo('Venerdì', '<select id="sc-venerdi">' + opzioniSel(["Un'ora in meno", 'Uguale agli altri giorni'], c.venerdi_regola || "Un'ora in meno") + '</select>') +
     '</div><p class="aiuto" id="sc-giornata-anteprima"></p></div>'
 
-  h += '<div class="riga-bottoni"><button type="button" class="primario grande" id="sc-salva">💾 Salva dati</button><button type="button" id="sc-chiudi">Chiudi</button>' +
-    (C.eliminazioneCommessa(c, [], [], []).permessa ? '<button type="button" class="pericolo" id="sc-elimina">🗑️ Elimina commessa</button>' : '') +
+  h += '<div class="riga-bottoni"><button type="button" class="primario grande" id="sc-salva">💾 Salva il piano</button><button type="button" id="sc-chiudi">Chiudi</button>' +
+    (C.eliminazioneCommessa(c, [], [], []).permessa ? '<button type="button" class="pericolo" id="sc-elimina">🗑️ ' + (c.collegata ? 'Togli dal Calendario' : 'Elimina commessa') + '</button>' : '') +
     '</div><div id="sc-esito"></div>'
 
-  if (nuova) {
-    h += '<p class="esito attenzione">Salva i dati per aggiungere capitoli, pianificazione e margini.</p>'
-  } else {
-    h += sezioneCapitoli(c) + sezioneRiepilogo(c) + sezionePianificazione(c) + sezioneMargini(c)
-  }
+  h += sezioneCapitoli(c) + sezioneRiepilogo(c) + sezionePianificazione(c) + sezioneMargini(c)
   w.corpo.innerHTML = h
   collegaScheda(w, c)
+}
+// Numero, nome, indirizzo e stato: da Anagrafiche, SOLO lettura.
+function sezioneAnagrafica(c) {
+  var h = '<div class="sezione"><h3>📇 Commessa (da Anagrafiche)</h3>'
+  if (c.interna) {
+    return h + '<div class="riquadro"><dl><dt>Numero</dt><dd>' + esc(c.numero) + '</dd><dt>Nome</dt><dd>' + esc(c.nome) + '</dd></dl></div>' +
+      '<p class="aiuto">Commessa interna del Calendario (ore libere, Magazzino).</p></div>'
+  }
+  if (c.collegata) {
+    return h + '<div class="riquadro"><dl><dt>Numero</dt><dd>' + esc(c.numero) + '</dd><dt>Nome</dt><dd>' + esc(c.nome) + '</dd>' +
+      '<dt>Indirizzo</dt><dd>' + (c.indirizzo ? esc(c.indirizzo) : '<strong>mancante</strong>') + '</dd>' +
+      '<dt>Stato commessa</dt><dd>' + (C.senzaStatoDaMettere(c)
+        ? '<span class="badge-stato senza">⚠️ ' + esc(C.TESTO_SENZA_STATO) + '</span>' + (c.stato_vecchio ? ' <span class="stato-prima">prima: ' + esc(c.stato_vecchio) + '</span>' : '')
+        : '<span class="badge-stato">' + esc(c.stato_commessa || 'senza stato') + '</span>') + '</dd></dl></div>' +
+      '<p class="aiuto">Si cambiano in Anagrafiche. Il Calendario li legge soltanto.</p></div>'
+  }
+  // riga vecchia (versione 2) o commessa non più trovata: si collega
+  var pc = C.commessePianificabili(ST.dati.cantieri, ST.dati.commesse, { tutti: true })
+  h += '<div class="esito attenzione">' + (c.cantiereMancante ? '⚠️ La commessa collegata non si trova più in Anagrafiche.' : '⚠️ Questo piano non è collegato a una commessa di Anagrafiche.') +
+    ' Dati vecchi: <strong>' + esc(c.numero + ' ' + c.nome) + '</strong>' + (c.indirizzo ? ' · ' + esc(c.indirizzo) : '') + '.</div>' +
+    '<div class="campi" style="margin-top:10px">' + campo('Collega alla commessa di Anagrafiche', '<select id="sc-collega"><option value="">— scegli —</option>' +
+      pc.lista.map(function (k) { return '<option value="' + k.id + '">' + esc((k.numero_commessa || 'senza numero') + ' · ' + k.nome + (k.stato_commessa ? ' (' + k.stato_commessa + ')' : '')) + '</option>' }).join('') + '</select>') + '</div>' +
+    '<div class="riga-bottoni"><button type="button" class="primario" id="sc-collega-ok">🔗 Collega</button></div>' +
+    '<p class="aiuto">Dopo il collegamento nome, numero e indirizzo si leggono da Anagrafiche. Il piano (capitoli, giorni, persone) resta uguale.</p></div>'
+  return h
 }
 // Riparazione: «Ore stimate» = un capitolo unico «Riparazione», creato/aggiornato al salvataggio
 function campoOreStimate(c) {
@@ -718,18 +819,17 @@ function anteprimaGiornata(w) {
 function collegaScheda(w, c) {
   var q = function (s) { return w.corpo.querySelector(s) }
   var fonte = c.viaggio_fonte || null
-  var calcolatoPer = null          // indirizzo dell'ultimo «Calcola viaggio» fatto in questa scheda
   q('#sc-chiudi').addEventListener('click', w.chiudi)
   q('#sc-tipo').addEventListener('change', function () { q('#sc-ore-stimate-campo').hidden = q('#sc-tipo').value !== 'Riparazione' })
   if (q('#sc-elimina')) q('#sc-elimina').addEventListener('click', function () {
     esegui(async function () {
       var el = C.eliminazioneCommessa(c, ST.dati.capitoli, ST.dati.assegnazioni, ST.dati.previste)
       if (!el.permessa) { mostraErrore(el.testo); return }
-      if (!await conferma(esc(el.testo), { si: 'Elimina', pericolo: true, titolo: 'Elimina commessa' })) return
+      if (!await conferma(esc(el.testo), { si: c.collegata ? 'Togli dal Calendario' : 'Elimina', pericolo: true, titolo: c.collegata ? 'Togli dal Calendario' : 'Elimina commessa' })) return
       await D.eliminaId('pl_commesse', c.id)
       w.chiudi()
       await ricarica(['commesse', 'capitoli', 'assegnazioni', 'previste'])
-      toast(c.numero + ' eliminata')
+      toast(c.collegata ? c.numero + ': piano tolto dal Calendario (la commessa resta in Anagrafiche)' : c.numero + ' eliminata')
     })
   })
   q('#sc-rid').addEventListener('change', function () { q('#sc-rid-altro').disabled = q('#sc-rid').value !== 'altro'; anteprimaGiornata(w) })
@@ -737,12 +837,23 @@ function collegaScheda(w, c) {
   q('#sc-venerdi').addEventListener('change', function () { anteprimaGiornata(w) })
   anteprimaGiornata(w)
   q('#sc-viaggio').addEventListener('input', function () { fonte = 'A mano'; q('#sc-fonte').value = 'A mano (al salvataggio)' })
-  q('#sc-indirizzo').addEventListener('input', function () { q('#sc-mappa').href = V.linkMappa(q('#sc-indirizzo').value) })
+  if (q('#sc-collega-ok')) q('#sc-collega-ok').addEventListener('click', function () {
+    esegui(async function () {
+      var kid = q('#sc-collega').value
+      if (!kid) { toast('Scegli la commessa di Anagrafiche', true); return }
+      var k = ST.dati.cantieri.find(function (x) { return x.id === kid })
+      if (!await conferma('Collegare il piano <strong>' + esc(c.numero + ' ' + c.nome) + '</strong> alla commessa <strong>' + esc((k.numero_commessa || '') + ' ' + k.nome) + '</strong> di Anagrafiche?<br>Da ora nome, numero e indirizzo si leggono da Anagrafiche. Il piano resta uguale.', { si: 'Collega' })) return
+      await D.aggiorna('pl_commesse', c.id, { cantiere_id: kid })
+      await ricarica(['cantieri', 'commesse'])
+      riapriScheda(w)
+      toast('Collegata a ' + (k.numero_commessa || k.nome))
+    })
+  })
   q('#sc-calcola').addEventListener('click', function () {
     esegui(async function () {
-      var ind = q('#sc-indirizzo').value.trim()
+      var ind = (c.indirizzo || '').trim()
       var es = q('#sc-viaggio-esito')
-      if (!ind) { es.innerHTML = '<div class="esito ko">Scrivi prima l\'indirizzo.</div>'; return }
+      if (!ind) { es.innerHTML = '<div class="esito ko">Manca l\'indirizzo della commessa: va messo in Anagrafiche.</div>'; return }
       q('#sc-calcola').disabled = true
       es.innerHTML = '<div class="esito attenzione">Calcolo in corso… (OpenStreetMap, qualche secondo)</div>'
       var r = await V.calcolaViaggio(ind, { fattore: ST.dati.imp.fattore_ora_punta })
@@ -752,25 +863,15 @@ function collegaScheda(w, c) {
       q('#sc-km').value = f(r.km)
       q('#sc-fonte').value = 'Calcolato'
       fonte = 'Calcolato'
-      calcolatoPer = ind
       var msg = r.minuti + ' min andata (' + r.minutiSenzaTraffico + ' min senza traffico × ' + f(ST.dati.imp.fattore_ora_punta, 2) + ', ai 5 minuti) · ' + f(r.km) + ' km'
-      if (c.id) {
-        var mod = V.modificaDaRisultato(r)
-        await D.aggiorna('pl_commesse', c.id, mod)
-        await ricarica(['commesse'])
-        es.innerHTML = '<div class="esito ok">Salvato: ' + esc(msg) + '</div>'
-      } else es.innerHTML = '<div class="esito ok">' + esc(msg) + ' — si salva con «Salva dati».</div>'
+      await D.aggiorna('pl_commesse', c.id, V.modificaDaRisultato(r))
+      await ricarica(['commesse'])
+      es.innerHTML = '<div class="esito ok">Salvato: ' + esc(msg) + '</div>'
     })
   })
   q('#sc-salva').addEventListener('click', function () {
     esegui(async function () {
       var es = q('#sc-esito')
-      var numero = q('#sc-numero').value.trim()
-      var nome = q('#sc-nome').value.trim()
-      if (!/^\d{2}-\d{3}$/.test(numero)) { es.innerHTML = '<div class="esito ko">Numero nel formato AA-NNN, per esempio 26-014.</div>'; return }
-      if (!nome) { es.innerHTML = '<div class="esito ko">Scrivi il nome della commessa.</div>'; return }
-      var dupl = ST.dati.commesse.find(function (x) { return x.numero === numero && x.id !== c.id })
-      if (dupl) { es.innerHTML = '<div class="esito ko">Il numero ' + esc(numero) + ' è già usato da «' + esc(dupl.nome) + '».</div>'; return }
       var vtxt = q('#sc-viaggio').value.trim()
       var viaggio = vtxt === '' ? null : Math.round(C.leggiNumero(vtxt))
       if (vtxt !== '' && !(viaggio >= 0)) { es.innerHTML = '<div class="esito ko">Minuti di viaggio non leggibili.</div>'; return }
@@ -778,12 +879,11 @@ function collegaScheda(w, c) {
       if (!(rid >= 0)) { es.innerHTML = '<div class="esito ko">Riduzione non leggibile.</div>'; return }
       var pers = q('#sc-persone').value.trim()
       var kmT = q('#sc-km').value.trim()
+      // SOLO dati del piano: numero, nome, indirizzo e stato della commessa stanno in Anagrafiche
       var campi = {
-        numero: numero, nome: nome, indirizzo: q('#sc-indirizzo').value.trim() || null, tipo: q('#sc-tipo').value,
-        stato: q('#sc-stato').value, data_inizio: q('#sc-inizio').value || null,
+        tipo: q('#sc-tipo').value, stato: q('#sc-stato').value, data_inizio: q('#sc-inizio').value || null,
         persone_previste: pers ? Math.round(C.leggiNumero(pers)) || null : null, colore: q('#sc-colore').value,
-        cantiere_id: q('#sc-cantiere').value || null, viaggio_min_andata: viaggio,
-        viaggio_km: kmT ? C.leggiNumero(kmT) : null,
+        viaggio_min_andata: viaggio, viaggio_km: kmT ? C.leggiNumero(kmT) : null,
         viaggio_fonte: viaggio === null ? null : (fonte || 'A mano'),
         riduzione_ore: rid, venerdi_regola: q('#sc-venerdi').value
       }
@@ -795,16 +895,12 @@ function collegaScheda(w, c) {
         oreStimate = C.leggiOre(inOre.value)
         if (!(oreStimate > 0)) { es.innerHTML = '<div class="esito ko">Ore stimate non leggibili: «' + esc(inOre.value) + '».</div>'; return }
       }
-      var indirizzoCambiato = (c.indirizzo || null) !== campi.indirizzo
       var diventaConfermato = campi.stato === 'Confermato' && c.stato !== 'Confermato'
       // «Finito» dal menu: si salva il resto, poi si passa da «Finito il…» con la data di oggi,
       // così le assegnazioni dopo oggi si liberano (dopo conferma) e l'avviso 10 funziona.
       var diventaFinito = campi.stato === 'Finito' && c.stato !== 'Finito'
       if (diventaFinito) campi.stato = c.stato || 'Bozza'
-      var salvata
-      if (c.id) salvata = await D.aggiorna('pl_commesse', c.id, campi)
-      else salvata = (await D.inserisci('pl_commesse', campi))[0]
-      w.commessaId = salvata.id
+      var salvata = await D.aggiorna('pl_commesse', c.id, campi)
       await ricarica(['commesse'])
       if (campi.tipo === 'Riparazione') {
         var cr = C.capitoloRiparazione(ST.capPer[salvata.id] || [], oreStimate)
@@ -813,35 +909,17 @@ function collegaScheda(w, c) {
         if (cr.azione === 'inserisci' || cr.azione === 'aggiorna') await ricarica(['capitoli'])
       }
       if (diventaConfermato) await salvaPreviste(salvata.id)
-      toast('Commessa ' + numero + ' salvata')
+      toast('Piano di ' + c.numero + ' salvato')
       if (diventaFinito) {
         var dataFine = (q('#pi-finito') && q('#pi-finito').value) || C.oggiIso()
         await segnaFinito(ST.perId[salvata.id], dataFine)
       }
-      // indirizzo cambiato: si ricalcola il viaggio, ma solo se non è stato messo a mano
-      if (indirizzoCambiato && campi.indirizzo && campi.viaggio_fonte !== 'A mano' && calcolatoPer !== campi.indirizzo) {
-        riapriScheda(w)
-        var es2 = w.corpo.querySelector('#sc-viaggio-esito')
-        es2.innerHTML = '<div class="esito attenzione">Indirizzo cambiato: ricalcolo il viaggio…</div>'
-        var r = await V.calcolaViaggio(campi.indirizzo, { fattore: ST.dati.imp.fattore_ora_punta })
-        if (r.ok) {
-          await D.aggiorna('pl_commesse', salvata.id, V.modificaDaRisultato(r))
-          await ricarica(['commesse'])
-          riapriScheda(w)
-          w.corpo.querySelector('#sc-viaggio-esito').innerHTML = '<div class="esito ok">Viaggio ricalcolato: ' + r.minuti + ' min andata · ' + f(r.km) + ' km</div>'
-        } else {
-          w.corpo.querySelector('#sc-viaggio-esito').innerHTML = '<div class="esito ko">' + esc(r.messaggio) + '</div>'
-        }
-        return
-      }
       riapriScheda(w)
     })
   })
-  if (c.id) {
-    collegaCapitoli(w, c)
-    collegaPianificazione(w, c)
-    collegaMargini(w, c)
-  }
+  collegaCapitoli(w, c)
+  collegaPianificazione(w, c)
+  collegaMargini(w, c)
 }
 
 // Copia del piano al passaggio a "Confermato"
@@ -1540,7 +1618,7 @@ function collegaBarra() {
   $('btn-indietro').addEventListener('click', function () { ST.ancora = C.spostaVista(ST.zoom, ST.ancora, -1); ST.pagina = 'piano'; disegna() })
   $('btn-avanti').addEventListener('click', function () { ST.ancora = C.spostaVista(ST.zoom, ST.ancora, 1); ST.pagina = 'piano'; disegna() })
   $('btn-oggi').addEventListener('click', function () { ST.ancora = C.oggiIso(); ST.pagina = 'piano'; disegna() })
-  $('btn-nuova').addEventListener('click', function () { apriCommessa(null) })
+  $('btn-pianifica').addEventListener('click', function () { esegui(apriPianifica) })
   $('btn-avvisi').addEventListener('click', apriAvvisi)
   $('btn-impostazioni').addEventListener('click', function () { ST.pagina = 'impostazioni'; disegna() })
   $('btn-esci').addEventListener('click', function () { esegui(async function () { await D.esci(); mostraLogin('Sei uscito.') }) })

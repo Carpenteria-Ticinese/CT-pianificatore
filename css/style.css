@@ -1,4 +1,4 @@
-/* Pianificatore cantieri — stile
+/* Calendario (pianificatore cantieri) — stile
    Stessa famiglia di colori della Pre-contabilità. Testo base 18 px, contrasto
    alto, ogni icona con la sua etichetta: il colore non porta mai da solo un significato. */
 
@@ -230,7 +230,30 @@ button.ubicazione.coperto { background: #e0e7ff; border-color: #3730a3; }
 @media (max-width: 600px) {
   :root { --col-testa: 150px; }
   #barra { gap: 6px; position: static; }
-  .marchio span { display: none; }
+  .marchio .versione { display: none; }
   .segmenti button { padding: 4px 8px; }
   .finestra { padding: 12px; }
+}
+
+/* ── Versione 3: nome e icona, «Pianifica commessa», stato da Anagrafiche ── */
+.marchio .nome-app { font-size: 1.2rem; }
+.marchio .versione { font-size: .8rem; font-weight: 400; opacity: .8; }
+.titolo-app { display: flex; align-items: center; gap: 12px; }
+.titolo-app h1 { margin: 0; }
+.icona-login { width: 56px; height: 56px; }
+.piccola-versione { font-size: .85rem; text-align: right; margin: 6px 0 0; }
+.badge-stato { display: inline-block; padding: 1px 8px; border: 2px solid var(--primary); border-radius: 999px; background: var(--primary-lt); color: var(--primary-hi); font-weight: 700; font-size: .9rem; }
+.badge-stato.senza { border-color: var(--warn); background: var(--warn-bg); color: var(--warn); }
+.stato-prima { color: var(--text3); font-size: .85rem; font-style: italic; }
+.gruppo-senza-stato { margin: 14px 0 0; padding: 8px 12px; background: var(--warn-bg); color: var(--warn); border-left: 8px solid var(--warn); border-radius: var(--radius); font-size: 1.05rem; }
+button.voce-commessa.senza-stato { border-left-color: var(--warn); }
+.lista-commesse { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
+button.voce-commessa { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; width: 100%; min-height: 64px; padding: 10px 14px; text-align: left; white-space: normal; border-left: 8px solid var(--primary); }
+button.voce-commessa:hover { background: var(--primary-lt); }
+.voce-commessa .vc-riga { font-size: 1.1rem; }
+.voce-commessa .num { font-weight: 700; }
+.voce-commessa .vc-sotto { color: var(--text2); font-size: .95rem; }
+@media (max-width: 600px) {
+  .marchio img { width: 30px; height: 30px; }
+  .azioni-barra button { white-space: normal; }
 }

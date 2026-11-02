@@ -3,25 +3,29 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CT Pianificatore cantieri</title>
+  <title>Calendario · Carpenteria Ticinese</title>
   <!-- ?v= : forza il browser a riprendere CSS/JS aggiornati (niente versioni vecchie in cache) -->
-  <link rel="icon" href="img/logo.png?v=2" />
-  <link rel="stylesheet" href="css/style.css?v=2" />
+  <link rel="icon" type="image/svg+xml" href="img/calendario.svg?v=3" />
+  <link rel="apple-touch-icon" href="img/logo.png?v=3" />
+  <link rel="stylesheet" href="css/style.css?v=3" />
 </head>
-<body data-versione="2">
+<body data-versione="3">
 
 <!-- ── Login ──────────────────────────────────────────────────────────────── -->
 <div id="schermo-login" class="schermo" hidden>
   <form id="form-login" class="scheda-login" autocomplete="on">
-    <img src="img/logo.png?v=2" alt="" class="logo-login" />
-    <h1>Pianificatore cantieri</h1>
-    <p class="sotto">Carpenteria Ticinese · solo titolare e responsabile</p>
+    <div class="titolo-app">
+      <img src="img/calendario.svg?v=3" alt="" class="icona-login" />
+      <h1>Calendario</h1>
+    </div>
+    <p class="sotto">Piano dei cantieri · Carpenteria Ticinese Sagl · solo titolare e responsabile</p>
     <div id="login-messaggio" class="messaggio" role="alert" hidden></div>
     <label for="login-email">Email</label>
     <input id="login-email" type="email" autocomplete="username" required />
     <label for="login-password">Password</label>
     <input id="login-password" type="password" autocomplete="current-password" required />
     <button type="submit" class="primario grande">Entra</button>
+    <p class="sotto piccola-versione">versione 3</p>
   </form>
 </div>
 
@@ -40,7 +44,7 @@
 <!-- ── App ────────────────────────────────────────────────────────────────── -->
 <div id="app" hidden>
   <header id="barra" aria-label="Barra comandi">
-    <div class="marchio"><img src="img/logo.png?v=2" alt="" /> <span>Pianificatore</span></div>
+    <div class="marchio"><img src="img/calendario.svg?v=3" alt="" /> <span class="nome-app">Calendario</span> <span class="versione">v3</span></div>
 
     <div class="segmenti" role="group" aria-label="Vista">
       <button type="button" class="seg" data-vista="cantieri" aria-pressed="true">🏗️ Cantieri</button>
@@ -62,13 +66,14 @@
     <div id="titolo-periodo" aria-live="polite"></div>
 
     <div class="azioni-barra">
-      <button type="button" id="btn-nuova" class="primario">+ Nuova commessa</button>
+      <button type="button" id="btn-pianifica" class="primario">📋 Pianifica commessa</button>
       <button type="button" id="btn-avvisi">🔔 Avvisi <span id="cont-avvisi" class="contatore">0</span></button>
       <button type="button" id="btn-impostazioni">⚙️ Impostazioni</button>
-      <button type="button" id="btn-esci" title="Esci dal Pianificatore">Esci</button>
+      <button type="button" id="btn-esci" title="Esci dal Calendario">Esci</button>
     </div>
   </header>
 
+  <div id="avviso-db" class="striscia-avviso" hidden></div>
   <div id="avviso-meteo" class="striscia-avviso" hidden></div>
   <div id="avviso-titolare" class="striscia-avviso" hidden></div>
 
@@ -89,10 +94,10 @@
 <div id="toast" role="status" aria-live="polite"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="js/config.js?v=2"></script>
-<script src="js/calcoli.js?v=2"></script>
-<script src="js/viaggio.js?v=2"></script>
-<script src="js/dati.js?v=2"></script>
-<script src="js/app.js?v=2"></script>
+<script src="js/config.js?v=3"></script>
+<script src="js/calcoli.js?v=3"></script>
+<script src="js/viaggio.js?v=3"></script>
+<script src="js/dati.js?v=3"></script>
+<script src="js/app.js?v=3"></script>
 </body>
 </html>

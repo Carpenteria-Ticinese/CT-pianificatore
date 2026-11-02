@@ -1,5 +1,5 @@
 /* ═══════════════════════════════════════════════════════════════════════════
-   Pianificatore cantieri — ACCESSO AI DATI (Supabase)
+   Calendario (pianificatore cantieri) — ACCESSO AI DATI (Supabase)
 
    LA TRAPPOLA (già pagata in un'altra app): con RLS un accesso negato NON dà
    errore, restituisce zero righe in silenzio. Quindi:
@@ -10,9 +10,11 @@
    - all'avvio pl_puo_pianificare() deve dire true e pl_impostazioni deve dare
      1 riga: se no, schermata di errore, non un piano vuoto.
 
-   operai: si leggono SOLO id, nome, cognome, email, attivo, data_fine_rapporto
-   (l'email serve solo a riconoscere il titolare fra gli operai).
+   operai: si leggono SOLO id, nome, cognome, email, user_id, attivo,
+   data_fine_rapporto (email e user_id servono solo a riconoscere il titolare).
    Nessun dato di paga viene letto o mostrato.
+   cantieri (= commesse di Anagrafiche): si LEGGONO id, nome, numero_commessa,
+   stato_commessa, tipo, indirizzo. Il Calendario non scrive mai cantieri né operai.
    ═══════════════════════════════════════════════════════════════════════════ */
 var PLD = (function () {
   'use strict'
@@ -60,6 +62,22 @@ var PLD = (function () {
     if (r.data !== true) return { ok: false, motivo: 'ruolo' }
     var p = await sb.from('profili').select('id,nome,ruolo').eq('id', s.user.id).maybeSingle()
     return { ok: true, profilo: p.data || { id: s.user.id, nome: s.user.email, ruolo: '' }, email: s.user.email }
+  }
+
+  var COLONNE_OPERAI = 'id,nome,cognome,email,user_id,attivo,data_fine_rapporto'
+  var COLONNE_CANTIERI = 'id,nome,numero_commessa,stato_commessa,stato,tipo,via,cap,citta,luogo'
+
+  // Versione dello schema pl_ nel database: 2 = PL_02 applicato (commesse da
+  // Anagrafiche). Se la funzione manca → 1 (solo PL_01): l'app funziona, ma
+  // «Pianifica commessa» dice che manca l'SQL.
+  async function versioneDb() {
+    await richiediSessione()
+    var r = await sb.rpc('pl_versione_db')
+    if (r.error) {
+      if (/function|does not exist|not found|404|PGRST202/i.test(r.error.message + ' ' + (r.error.code || ''))) return 1
+      throw errore('Controllo versione del database', r.error)
+    }
+    return Number(r.data) || 1
   }
 
   // Lettura completa, a pagine da 1000 righe (il limite di Supabase)
@@ -135,9 +153,10 @@ var PLD = (function () {
       leggi('pl_assegnazioni_previste', '*', 'data'),
       leggi('pl_meteo_normali', '*', 'stazione,mese'),
       leggi('pl_avvisi_ignorati', 'chiave'),
-      leggi('operai', 'id,nome,cognome,email,attivo,data_fine_rapporto', 'cognome'),
-      leggi('cantieri', 'id,nome,via,cap,citta,stato', 'nome'),
-      leggi('profili', 'id,nome,ruolo', 'nome')
+      leggi('operai', COLONNE_OPERAI, 'cognome'),
+      leggi('cantieri', COLONNE_CANTIERI, 'nome'),
+      leggi('profili', 'id,nome,ruolo', 'nome'),
+      versioneDb()
     ])
     // Canarino: le impostazioni sono UNA riga sempre. Zero righe = RLS che nega
     // in silenzio (o SQL non applicato): non si mostra un piano vuoto.
@@ -145,7 +164,13 @@ var PLD = (function () {
       throw new Error('Impostazioni non leggibili (' + risultati[0].length + ' righe invece di 1). ' +
         'Il database non dà i dati a questo utente, oppure lo SQL PL_01 non è stato applicato. Il piano NON è attendibile.')
     }
+    // Zero commesse di Anagrafiche mentre il piano ne ha di collegate = lettura negata
+    // in silenzio: errore, non un piano con i nomi sbagliati.
+    if (!risultati[12].length && risultati[5].some(function (c) { return c.cantiere_id })) {
+      throw new Error('Commesse di Anagrafiche non leggibili (0 righe dalla tabella cantieri, ma il piano ne usa). Il piano NON è attendibile.')
+    }
     return {
+      versioneDb: risultati[14],
       imp: risultati[0][0], periodi: risultati[1], festivi: risultati[2], chiusure: risultati[3],
       assenze: risultati[4], commesse: risultati[5], capitoli: risultati[6], assegnazioni: risultati[7],
       previste: risultati[8], meteo: risultati[9], ignorati: risultati[10].map(function (r) { return r.chiave }),
@@ -156,6 +181,7 @@ var PLD = (function () {
   return {
     sb: sb, sessione: sessione, richiediSessione: richiediSessione, entra: entra, esci: esci,
     controllaAccesso: controllaAccesso, leggi: leggi, inserisci: inserisci, aggiorna: aggiorna,
-    salvaUpsert: salvaUpsert, eliminaId: eliminaId, caricaTutto: caricaTutto
+    salvaUpsert: salvaUpsert, eliminaId: eliminaId, caricaTutto: caricaTutto, versioneDb: versioneDb,
+    COLONNE_OPERAI: COLONNE_OPERAI, COLONNE_CANTIERI: COLONNE_CANTIERI
   }
 })()
