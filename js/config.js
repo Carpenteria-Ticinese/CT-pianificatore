@@ -3,7 +3,7 @@
    La chiave "publishable" è pubblica per definizione: la protezione vera sono
    le policy RLS sulle tabelle pl_ (vedi sql/applicati/PL_01_tabelle.sql). */
 var PL_CONFIG = {
-  VERSIONE: '5',
+  VERSIONE: '6',
   SUPABASE_URL: 'https://wgidgbauhivdctdxfjnk.supabase.co',
   SUPABASE_KEY: 'sb_publishable_Ke7MTQGHPYVXvKInfOrUQQ_Ys6qKJvD',
   RUOLI_AMMESSI: ['titolare', 'responsabile'],

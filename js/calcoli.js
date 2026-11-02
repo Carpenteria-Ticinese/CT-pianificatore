@@ -438,9 +438,13 @@
     }
     return n
   }
-  // p: { assegnazioni (della commessa), cal, giorniAnno, quotaInverno }
+  // p: { assegnazioni (della commessa), cal, giorniAnno, quotaInverno, esterni }
+  // v6: i giorni degli Esterni (esterni = insiemeEsterni) non contano: si ammalano
+  // per la loro ditta, non per noi.
   function margineMalattia(p) {
-    var ass = p.assegnazioni || []
+    var tutte = p.assegnazioni || []
+    var ass = senzaEsterni(tutte, p.esterni)
+    if (!ass.length && tutte.length) return { nessuno: true, soloEsterni: true, motivo: 'Pianificati solo Esterni: il margine malattia conta solo i Dipendenti.' }
     var gp = {}
     ass.forEach(function (a) { gp[a.data + '|' + chiavePersona(a)] = a.data })
     var giorniPersona = Object.keys(gp).map(function (k) { return gp[k] })
@@ -527,7 +531,7 @@
   // Avviso 6, scelta 3: chi è scelto lavora durante la chiusura (ferie da
   // recuperare). Le ore lavorate in chiusura si tolgono dalla fine della commessa.
   function pianoLavoraDurante(p) {
-    // p: { assCommessa, chiusura, personeScelte:[persona_id], cal, commessa, viaggioIncluso, assenze }
+    // p: { assCommessa, chiusura, personeScelte:[persona_id], cal, commessa, viaggioIncluso, assenze, esterni }
     // In chiusura si lavora solo per le ore che mancano dopo quello che si fa prima.
     var ch = p.chiusura
     var fuori = p.assCommessa.filter(function (a) { return a.data < ch.dal || a.data > ch.al }).map(function (a) { return copia(a) })
@@ -571,7 +575,8 @@
       // mancano ore: si aggiungono dopo la fine, con le persone dell'ultimo giorno
       var fine = lista.length ? lista[lista.length - 1].data : ch.al
       var ultime = lista.filter(function (a) { return a.data === fine })
-      var persone = ultime.map(function (a) { return a.persona_id ? { persona_id: a.persona_id } : { segnaposto: a.segnaposto } })
+      // v6: gli Esterni non entrano nel riempimento automatico (p.esterni)
+      var persone = senzaEsterni(ultime, p.esterni).map(function (a) { return a.persona_id ? { persona_id: a.persona_id } : { segnaposto: a.segnaposto } })
       if (!persone.length) persone = p.personeScelte.map(function (pid) { return { persona_id: pid } })
       var r = riempiAutomatico({ oreTotali: -delta, dataInizio: aggiungiGiorni(fine, 1), persone: persone, cal: p.cal, commessa: p.commessa, assenze: p.assenze, viaggioIncluso: p.viaggioIncluso })
       lista = lista.concat(r.assegnazioni)
@@ -619,7 +624,25 @@
   }
   // «Ricalcola con le ore del nuovo periodo»: rifà Riempi con le stesse persone
   // (in ordine di comparsa) e la data d'inizio di adesso. Le modifiche a mano si perdono.
+  // v6: le righe degli Esterni (p.esterni) restano com'erano (sono messe a mano) e le
+  // loro ore si tolgono da quelle da coprire; Riempi usa solo gli altri.
   function pianoRicalcola(assCommessa, p) {
+    if (p.esterni) {
+      var est = assCommessa.filter(function (a) { return a.persona_id && p.esterni[a.persona_id] })
+      if (est.length) {
+        var altre = senzaEsterni(assCommessa, p.esterni)
+        var tenute = est.map(function (a) { return copia(a) })
+        var q = {}
+        Object.keys(p).forEach(function (k) { q[k] = p[k] })
+        q.esterni = null
+        q.oreTotali = Math.max(0, Math.round((Number(p.oreTotali) - sommaOre(est)) * 1000) / 1000)
+        if (!altre.length) return { assegnazioni: tenute, fine: tenute.map(function (a) { return a.data }).sort().pop() || null, oreNonCoperte: q.oreTotali, soloEsterni: true }
+        var r = pianoRicalcola(altre, q)
+        var tutte = tenute.concat(r.assegnazioni)
+        var dd = tutte.map(function (a) { return a.data }).sort()
+        return { assegnazioni: tutte, fine: dd[dd.length - 1] || null, oreNonCoperte: r.oreNonCoperte }
+      }
+    }
     var ordinate = assCommessa.slice().sort(function (x, y) { return x.data < y.data ? -1 : x.data > y.data ? 1 : (x.posizione || 1) - (y.posizione || 1) })
     var viste = {}, persone = []
     ordinate.forEach(function (a) {
@@ -854,8 +877,53 @@
   // Persone da pianificare: da operai, escluse quelle non attive e quelle con
   // fine rapporto passata (operai.data_fine_rapporto < oggi). Chi esce in futuro
   // resta fino a quel giorno (l'avviso 11 non lo cerca dopo la fine).
-  function personeAttive(operai, oggi) {
-    return (operai || []).filter(function (o) { return o.attivo !== false && (!o.data_fine_rapporto || o.data_fine_rapporto >= oggi) })
+  // v6: rapporto = 'dipendente' | 'esterno' (operai.rapporto, Anagrafiche). Senza la
+  // colonna (o vuoto) vale «dipendente», la base del database.
+  //   rapporto (facoltativo): 'dipendente' = solo Dipendenti, 'esterno' = solo Esterni.
+  function personeAttive(operai, oggi, rapporto) {
+    return (operai || []).filter(function (o) {
+      if (o.attivo === false || (o.data_fine_rapporto && o.data_fine_rapporto < oggi)) return false
+      if (rapporto === 'dipendente') return !eEsterno(o)
+      if (rapporto === 'esterno') return eEsterno(o)
+      return true
+    })
+  }
+
+  // ── Esterni (lattonieri e altre ditte) — v6 ───────────────────────────────
+  // Nel Calendario gli Esterni si pianificano e basta: si assegnano a mano, nel
+  // loro gruppo. «Riempi», ferie da recuperare, assenze, «senza lavoro» e il
+  // margine malattia usano SOLO i Dipendenti.
+  var RAPPORTO_ESTERNO = 'esterno'
+  function eEsterno(o) { return !!o && o.rapporto === RAPPORTO_ESTERNO }
+  // { id: true } degli Esterni (anche non più attivi: le loro vecchie righe restano loro)
+  function insiemeEsterni(operai) {
+    var s = {}
+    ;(operai || []).forEach(function (o) { if (eEsterno(o)) s[o.id] = true })
+    return s
+  }
+  function gruppiPersone(operai, oggi) {
+    return { dipendenti: personeAttive(operai, oggi, 'dipendente'), esterni: personeAttive(operai, oggi, 'esterno') }
+  }
+  // Nome della ditta (tm_contatti di Anagrafiche): ragione sociale, se no nome e cognome.
+  function nomeDitta(k) {
+    if (!k) return ''
+    return pulito(k.ragione_sociale) || pulito((pulito(k.nome) + ' ' + pulito(k.cognome)))
+  }
+  // Testo della ditta di un Esterno, mai vuoto.
+  //   ditte: { id: riga tm_contatti } letta; null = lettura non riuscita.
+  var DITTA_NON_LEGGIBILE = 'ditta non leggibile'
+  var DITTA_NON_INDICATA = 'ditta non indicata'
+  function dittaDi(o, ditte) {
+    if (!o || !o.ditta_id) return DITTA_NON_INDICATA
+    var k = ditte && ditte[o.ditta_id]
+    if (!k) return DITTA_NON_LEGGIBILE
+    return nomeDitta(k) || 'ditta senza nome'
+  }
+  function etichettaEsterno(o, ditte) { return '👷 Esterno · ' + dittaDi(o, ditte) }
+  // Toglie dalle assegnazioni quelle degli Esterni (esterni = insiemeEsterni)
+  function senzaEsterni(ass, esterni) {
+    if (!esterni) return ass || []
+    return (ass || []).filter(function (a) { return !(a.persona_id && esterni[a.persona_id]) })
   }
   function commessaChiusa(c) { return !!c && (c.stato === 'Finito' || STATI_CHIUSI.indexOf(c.stato_commessa) >= 0) }
 
@@ -1111,7 +1179,8 @@
     // 11. persona senza lavoro (da oggi per l'orizzonte), raggruppato per settimana
     var oggi = S.oggi || oggiIso()
     var orizzonte = S.orizzonteGiorni || 28
-    ;(S.persone || []).forEach(function (p) {
+    // v6: gli Esterni non sono «senza lavoro»: lavorano per la loro ditta
+    ;(S.persone || []).filter(function (p) { return !eEsterno(p) }).forEach(function (p) {
       var perSett = {}
       for (var i = 0; i < orizzonte; i++) {
         var d = aggiungiGiorni(oggi, i)
@@ -1231,6 +1300,10 @@
     STATI_PIANIFICABILI: STATI_PIANIFICABILI, STATI_CHIUSI: STATI_CHIUSI, indirizzoCantiere: indirizzoCantiere,
     pulito: pulito, unisciCantieri: unisciCantieri, commessePianificabili: commessePianificabili, senzaStatoDaMettere: senzaStatoDaMettere, TESTO_SENZA_STATO: TESTO_SENZA_STATO, cercaCantiere: cercaCantiere,
     commessaChiusa: commessaChiusa, personeAttive: personeAttive,
+    // Esterni (v6)
+    RAPPORTO_ESTERNO: RAPPORTO_ESTERNO, eEsterno: eEsterno, insiemeEsterni: insiemeEsterni, gruppiPersone: gruppiPersone,
+    nomeDitta: nomeDitta, dittaDi: dittaDi, etichettaEsterno: etichettaEsterno, senzaEsterni: senzaEsterni,
+    DITTA_NON_LEGGIBILE: DITTA_NON_LEGGIBILE, DITTA_NON_INDICATA: DITTA_NON_INDICATA,
     // avvisi e viste
     TIPI_AVVISO: TIPI_AVVISO, calcolaAvvisi: calcolaAvvisi, intervalloVista: intervalloVista,
     spostaVista: spostaVista, blocchiMargine: blocchiMargine

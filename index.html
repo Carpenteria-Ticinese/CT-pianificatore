@@ -5,17 +5,17 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Calendario · Carpenteria Ticinese</title>
   <!-- ?v= : forza il browser a riprendere CSS/JS aggiornati (niente versioni vecchie in cache) -->
-  <link rel="icon" type="image/svg+xml" href="img/calendario.svg?v=5" />
-  <link rel="apple-touch-icon" href="img/logo.png?v=5" />
-  <link rel="stylesheet" href="css/style.css?v=5" />
+  <link rel="icon" type="image/svg+xml" href="img/calendario.svg?v=6" />
+  <link rel="apple-touch-icon" href="img/logo.png?v=6" />
+  <link rel="stylesheet" href="css/style.css?v=6" />
 </head>
-<body data-versione="4">
+<body data-versione="6">
 
 <!-- ── Login ──────────────────────────────────────────────────────────────── -->
 <div id="schermo-login" class="schermo" hidden>
   <form id="form-login" class="scheda-login" autocomplete="on">
     <div class="titolo-app">
-      <img src="img/calendario.svg?v=5" alt="" class="icona-login" />
+      <img src="img/calendario.svg?v=6" alt="" class="icona-login" />
       <h1>Calendario</h1>
     </div>
     <p class="sotto">Piano dei cantieri · Carpenteria Ticinese Sagl · solo titolare e responsabile</p>
@@ -25,7 +25,7 @@
     <label for="login-password">Password</label>
     <input id="login-password" type="password" autocomplete="current-password" required />
     <button type="submit" class="primario grande">Entra</button>
-    <p class="sotto piccola-versione">versione 4</p>
+    <p class="sotto piccola-versione">versione 6</p>
   </form>
 </div>
 
@@ -44,7 +44,7 @@
 <!-- ── App ────────────────────────────────────────────────────────────────── -->
 <div id="app" hidden>
   <header id="barra" aria-label="Barra comandi">
-    <div class="marchio"><img src="img/calendario.svg?v=5" alt="" /> <span class="nome-app">Calendario</span> <span class="versione">v5</span></div>
+    <div class="marchio"><img src="img/calendario.svg?v=6" alt="" /> <span class="nome-app">Calendario</span> <span class="versione">v6</span></div>
 
     <div class="segmenti" role="group" aria-label="Vista">
       <button type="button" class="seg" data-vista="cantieri" aria-pressed="true">🏗️ Cantieri</button>
@@ -76,6 +76,7 @@
   <div id="avviso-db" class="striscia-avviso" hidden></div>
   <div id="avviso-meteo" class="striscia-avviso" hidden></div>
   <div id="avviso-titolare" class="striscia-avviso" hidden></div>
+  <div id="avviso-persone" class="striscia-avviso" hidden></div>
 
   <main id="pagina-piano">
     <div id="contenitore-griglia" aria-label="Piano">
@@ -94,14 +95,14 @@
 <div id="toast" role="status" aria-live="polite"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="js/config.js?v=5"></script>
-<script src="js/calcoli.js?v=5"></script>
-<script src="js/viaggio.js?v=5"></script>
-<script src="js/dati.js?v=5"></script>
+<script src="js/config.js?v=6"></script>
+<script src="js/calcoli.js?v=6"></script>
+<script src="js/viaggio.js?v=6"></script>
+<script src="js/dati.js?v=6"></script>
 <!-- v4 «Carica offerta Excel»: SheetJS in locale (mai da internet), copia del lettore del Preventivatore, ore per capitolo -->
-<script src="lib/xlsx-0.20.3.full.min.js?v=5"></script>
-<script src="js/importa_offerta.js?v=5"></script>
-<script src="js/offerta_ore.js?v=5"></script>
-<script src="js/app.js?v=5"></script>
+<script src="lib/xlsx-0.20.3.full.min.js?v=6"></script>
+<script src="js/importa_offerta.js?v=6"></script>
+<script src="js/offerta_ore.js?v=6"></script>
+<script src="js/app.js?v=6"></script>
 </body>
 </html>

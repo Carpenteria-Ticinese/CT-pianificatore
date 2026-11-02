@@ -11,8 +11,11 @@
      1 riga: se no, schermata di errore, non un piano vuoto.
 
    operai: si leggono SOLO id, nome, cognome, email, user_id, attivo,
-   data_fine_rapporto (email e user_id servono solo a riconoscere il titolare).
-   Nessun dato di paga viene letto o mostrato.
+   data_fine_rapporto, rapporto, ditta_id (email e user_id servono solo a
+   riconoscere il titolare). Nessun dato di paga viene letto o mostrato.
+   v6: rapporto 'dipendente' | 'esterno'; per gli Esterni si legge il NOME della
+   ditta da tm_contatti (Anagrafiche): id, ragione_sociale, nome, cognome, solo
+   per gli id usati. Il Calendario non scrive mai operai né tm_contatti.
    cantieri (= commesse di Anagrafiche): si LEGGONO id, nome, numero_commessa,
    stato_commessa, tipo, indirizzo. Il Calendario non scrive mai cantieri né operai.
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -64,7 +67,54 @@ var PLD = (function () {
     return { ok: true, profilo: p.data || { id: s.user.id, nome: s.user.email, ruolo: '' }, email: s.user.email }
   }
 
-  var COLONNE_OPERAI = 'id,nome,cognome,email,user_id,attivo,data_fine_rapporto'
+  var COLONNE_OPERAI = 'id,nome,cognome,email,user_id,attivo,data_fine_rapporto,rapporto,ditta_id'
+  var COLONNE_OPERAI_V5 = 'id,nome,cognome,email,user_id,attivo,data_fine_rapporto'
+  var COLONNE_DITTE = 'id,ragione_sociale,nome,cognome'
+  var TESTO_SENZA_RAPPORTO = 'Nel database manca la colonna «rapporto» delle persone (SQL di Anagrafiche ANAG_F2_01): ' +
+    'tutte le persone sono trattate come Dipendenti e il gruppo «Esterni» non si vede.'
+
+  // Colonna che non esiste (42703 da Postgres, PGRST204 / messaggio da PostgREST)
+  function colonnaMancante(e) {
+    var o = (e && e.originale) || e || {}
+    var t = (o.code || '') + ' ' + (o.message || '') + ' ' + (e && e.message || '')
+    return /42703|PGRST204/.test(t) || /column .*(rapporto|ditta_id).* does not exist/i.test(t)
+  }
+
+  // Persone con rapporto e ditta. Se la colonna rapporto manca: si leggono come
+  // prima e si dice perché (mai un elenco vuoto muto). { operai, senzaRapporto }
+  async function leggiOperai() {
+    try {
+      return { operai: await leggi('operai', COLONNE_OPERAI, 'cognome'), senzaRapporto: null }
+    } catch (e) {
+      if (e && e.sessioneAssente) throw e
+      if (!colonnaMancante(e)) throw e
+      var vecchi = await leggi('operai', COLONNE_OPERAI_V5, 'cognome')
+      vecchi.forEach(function (o) { o.rapporto = 'dipendente'; o.ditta_id = null })
+      return { operai: vecchi, senzaRapporto: TESTO_SENZA_RAPPORTO }
+    }
+  }
+
+  // Nomi delle ditte degli Esterni. { ditte: { id: riga } | null, errore: testo | null }
+  // Righe mancanti (RLS che nega in silenzio) = «ditta non leggibile» nell'app, mai vuoto.
+  async function leggiDitte(operai) {
+    var ids = []
+    ;(operai || []).forEach(function (o) { if (o.rapporto === 'esterno' && o.ditta_id && ids.indexOf(o.ditta_id) < 0) ids.push(o.ditta_id) })
+    if (!ids.length) return { ditte: {}, errore: null }
+    try {
+      var righe = []
+      for (var i = 0; i < ids.length; i += 200) {
+        var pezzo = ids.slice(i, i + 200)
+        righe = righe.concat(await leggi('tm_contatti', COLONNE_DITTE, null, function (q) { return q.in('id', pezzo) }))
+      }
+      var ditte = {}
+      righe.forEach(function (r) { ditte[r.id] = r })
+      var mancano = ids.filter(function (id) { return !ditte[id] }).length
+      return { ditte: ditte, errore: mancano ? 'Nomi delle ditte non leggibili per ' + mancano + (mancano === 1 ? ' ditta' : ' ditte') + ' (il database non li dà a questo utente).' : null }
+    } catch (e) {
+      if (e && e.sessioneAssente) throw e
+      return { ditte: null, errore: 'Nomi delle ditte non leggibili: ' + ((e && e.message) || e) }
+    }
+  }
   var COLONNE_CANTIERI = 'id,nome,numero_commessa,stato_commessa,stato,tipo,via,cap,citta,luogo'
 
   // Versione dello schema pl_ nel database: 2 = PL_02 applicato (commesse da
@@ -153,7 +203,7 @@ var PLD = (function () {
       leggi('pl_assegnazioni_previste', '*', 'data'),
       leggi('pl_meteo_normali', '*', 'stazione,mese'),
       leggi('pl_avvisi_ignorati', 'chiave'),
-      leggi('operai', COLONNE_OPERAI, 'cognome'),
+      leggiOperai(),
       leggi('cantieri', COLONNE_CANTIERI, 'nome'),
       leggi('profili', 'id,nome,ruolo', 'nome'),
       versioneDb()
@@ -169,12 +219,15 @@ var PLD = (function () {
     if (!risultati[12].length && risultati[5].some(function (c) { return c.cantiere_id })) {
       throw new Error('Commesse di Anagrafiche non leggibili (0 righe dalla tabella cantieri, ma il piano ne usa). Il piano NON è attendibile.')
     }
+    var op = risultati[11]
+    var di = await leggiDitte(op.operai)
     return {
       versioneDb: risultati[14],
+      senzaRapporto: op.senzaRapporto, ditte: di.ditte, erroreDitte: di.errore,
       imp: risultati[0][0], periodi: risultati[1], festivi: risultati[2], chiusure: risultati[3],
       assenze: risultati[4], commesse: risultati[5], capitoli: risultati[6], assegnazioni: risultati[7],
       previste: risultati[8], meteo: risultati[9], ignorati: risultati[10].map(function (r) { return r.chiave }),
-      operai: risultati[11], cantieri: risultati[12], profili: risultati[13]
+      operai: op.operai, cantieri: risultati[12], profili: risultati[13]
     }
   }
 
@@ -182,6 +235,7 @@ var PLD = (function () {
     sb: sb, sessione: sessione, richiediSessione: richiediSessione, entra: entra, esci: esci,
     controllaAccesso: controllaAccesso, leggi: leggi, inserisci: inserisci, aggiorna: aggiorna,
     salvaUpsert: salvaUpsert, eliminaId: eliminaId, caricaTutto: caricaTutto, versioneDb: versioneDb,
+    leggiOperai: leggiOperai, leggiDitte: leggiDitte, colonnaMancante: colonnaMancante,
     COLONNE_OPERAI: COLONNE_OPERAI, COLONNE_CANTIERI: COLONNE_CANTIERI
   }
 })()

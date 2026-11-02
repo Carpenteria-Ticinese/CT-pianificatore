@@ -7,6 +7,9 @@
    Commesse: nome, numero, indirizzo e stato si LEGGONO da Anagrafiche (tabella
    cantieri) e non si scrivono mai; pl_commesse tiene solo il piano. Persone:
    lette da operai (escluse quelle con fine rapporto passata).
+   v6: ST.persone = solo Dipendenti (Riempi, assenze, ferie da recuperare,
+   «senza lavoro»); ST.esterni = Esterni, nel loro gruppo con il nome della
+   ditta, assegnati solo a mano (pannello Assegna, trascinare).
    ═══════════════════════════════════════════════════════════════════════════ */
 'use strict'
 var C = window.PLC, V = window.PLViaggio, D = window.PLD
@@ -15,7 +18,7 @@ var O = window.CTOffertaOre    // v4: «Carica offerta Excel» (js/offerta_ore.j
 var ST = {
   dati: null, profilo: null, email: '',
   vista: 'cantieri', zoom: 'mese', ancora: C.oggiIso(), pagina: 'piano',
-  cal: null, nomi: {}, persone: [], perId: {}, capPer: {}, assPer: {}, rie: {},
+  cal: null, nomi: {}, persone: [], esterni: [], esterniSet: {}, perId: {}, capPer: {}, assPer: {}, rie: {},
   meteoMap: {}, magazzino: null, coda: [], avvisi: []
 }
 var PALETTE = ['#2d6a4f', '#1d4ed8', '#b45309', '#7c3aed', '#be123c', '#0f766e', '#4d7c0f', '#c2410c', '#0369a1', '#a21caf']
@@ -184,9 +187,17 @@ function ricostruisci() {
   ST.nomi = {}
   d.operai.forEach(function (o) { ST.nomi[o.id] = nomeOperaio(o) })
   var oggi = C.oggiIso()
-  ST.persone = C.personeAttive(d.operai, oggi)
-    .map(function (o) { return { id: o.id, nome: ST.nomi[o.id], data_fine_rapporto: o.data_fine_rapporto } })
-    .sort(function (a, b) { return a.nome.localeCompare(b.nome) })
+  var gr = C.gruppiPersone(d.operai, oggi)
+  var perNome = function (a, b) { return a.nome.localeCompare(b.nome) }
+  // Dipendenti: Riempi, assenze, ferie da recuperare, «senza lavoro»
+  ST.persone = gr.dipendenti
+    .map(function (o) { return { id: o.id, nome: ST.nomi[o.id], data_fine_rapporto: o.data_fine_rapporto, rapporto: 'dipendente' } })
+    .sort(perNome)
+  // Esterni: solo a mano, nel loro gruppo, con la ditta (mai vuota)
+  ST.esterniSet = C.insiemeEsterni(d.operai)
+  ST.esterni = gr.esterni
+    .map(function (o) { return { id: o.id, nome: ST.nomi[o.id], data_fine_rapporto: o.data_fine_rapporto, rapporto: 'esterno', etichetta: C.etichettaEsterno(o, d.ditte) } })
+    .sort(perNome)
   ST.titolariMancanti = titolariNonInOperai()
   ST.perId = {}; d.commesse.forEach(function (c) { ST.perId[c.id] = c })
   ST.capPer = {}; d.capitoli.forEach(function (x) { (ST.capPer[x.commessa_id] = ST.capPer[x.commessa_id] || []).push(x) })
@@ -240,6 +251,11 @@ function disegna() {
   tit.hidden = !ST.titolariMancanti.length
   tit.textContent = '👷 Il titolare (' + ST.titolariMancanti.join(', ') + ') non risulta fra gli operai attivi, quindi non compare nella vista Persone. ' +
     'Va aggiunto in Anagrafiche → Persone (oggi: App Cantieri → Collaboratori), con lo stesso nome o collegato al suo accesso.'
+  // v6: colonna «rapporto» mancante o nomi delle ditte non leggibili → striscia, mai silenzio
+  var sp = $('avviso-persone')
+  var testiPersone = [ST.dati.senzaRapporto, ST.dati.erroreDitte && (ST.dati.erroreDitte + ' Accanto a quegli Esterni c’è scritto «' + C.DITTA_NON_LEGGIBILE + '».')].filter(Boolean)
+  sp.hidden = !testiPersone.length
+  sp.textContent = '👷 ' + testiPersone.join(' ')
   var db = $('avviso-db')
   db.hidden = ST.dati.versioneDb >= 2
   db.textContent = '🗄️ Database non aggiornato: manca l’SQL PL_02. Il piano si vede e si modifica, ma «Pianifica commessa» non è ancora disponibile.'
@@ -361,18 +377,36 @@ function righePersone(giorni, oggi) {
   var dal = giorni[0], al = giorni[giorni.length - 1]
   var nelPeriodo = ST.dati.assegnazioni.filter(function (a) { return a.data >= dal && a.data <= al })
   var righe = ST.persone.map(function (p) { return { chiave: 'p:' + p.id, nome: p.nome, persona_id: p.id } })
-  var viste = {}; righe.forEach(function (r) { viste[r.chiave] = 1 })
+  // v6: Esterni in un gruppo a parte, sotto, con il nome della ditta
+  var esterni = ST.esterni.map(function (p) { return { chiave: 'p:' + p.id, nome: p.nome, persona_id: p.id, esterno: true, etichetta: p.etichetta } })
+  var viste = {}; righe.concat(esterni).forEach(function (r) { viste[r.chiave] = 1 })
   nelPeriodo.forEach(function (a) {
     var k = C.chiavePersona(a)
     if (viste[k]) return
     viste[k] = 1
+    if (a.persona_id && ST.esterniSet[a.persona_id]) {   // Esterno non più attivo con righe nel periodo
+      var o = ST.dati.operai.find(function (x) { return x.id === a.persona_id })
+      esterni.push({ chiave: k, nome: nomeChiave(k), persona_id: a.persona_id, esterno: true, etichetta: C.etichettaEsterno(o, ST.dati.ditte) })
+      return
+    }
     righe.push({ chiave: k, nome: nomeChiave(k), persona_id: a.persona_id || null, segnaposto: !a.persona_id })
   })
-  if (!righe.length) return ''
+  if (!righe.length && !esterni.length) return ''
+  if (esterni.length) {
+    righe.push({ gruppo: true, n: esterni.length })
+    righe = righe.concat(esterni)
+  }
   var h = ''
   righe.forEach(function (r) {
+    if (r.gruppo) {
+      h += '<tr class="riga-gruppo" data-gruppo="esterni"><td class="testa gruppo-esterni"><strong>👷 Esterni</strong>' +
+        '<span class="sottoriga">altre ditte · ' + r.n + (r.n === 1 ? ' persona' : ' persone') + ' · solo a mano</span></td>' +
+        '<td class="gruppo-esterni-resto" colspan="' + giorni.length + '"></td></tr>'
+      return
+    }
     var mie = nelPeriodo.filter(function (a) { return C.chiavePersona(a) === r.chiave })
-    h += '<tr data-riga="' + esc(r.chiave) + '"><td class="testa"><strong>' + esc(r.nome) + '</strong>' +
+    h += '<tr data-riga="' + esc(r.chiave) + '"' + (r.esterno ? ' class="riga-esterno"' : '') + '><td class="testa"><strong>' + esc(r.nome) + '</strong>' +
+      (r.esterno ? '<span class="etichetta-esterno">' + esc(r.etichetta) + '</span>' : '') +
       '<span class="sottoriga">' + fOre(C.sommaOre(mie)) + ' nel periodo</span></td>'
     giorni.forEach(function (d) {
       var info = C.infoGiorno(ST.cal, d)
@@ -479,7 +513,11 @@ async function lasciaSu(t, td) {
     toast('Spostata: ' + (ST.perId[a.commessa_id] || {}).numero + ' · ' + fOre(a.ore) + ' → ' + nomeChiave(k) + ', ' + C.fmtGiorno(data))
   } else if (t.tipo === 'coda') {
     var r = ST.perId[t.commessa_id]
-    if (td.dataset.persona && td.dataset.persona.indexOf('p:') === 0) {
+    if (td.dataset.persona && td.dataset.persona.indexOf('p:') === 0 && ST.esterniSet[td.dataset.persona.slice(2)]) {
+      // v6: Riempi non usa gli Esterni → si sceglie fra i Dipendenti
+      toast('Gli Esterni non entrano in «Riempi»: scegli i Dipendenti. Un Esterno si assegna a mano cliccando la sua cella.', true)
+      apriRiempi(r, data)
+    } else if (td.dataset.persona && td.dataset.persona.indexOf('p:') === 0) {
       var pid = td.dataset.persona.slice(2)
       var ore = C.sommaOre(ST.capPer[r.id] || [])
       if (!(ore > 0)) { toast('La riparazione ' + r.numero + ' non ha ore stimate (capitoli): aprila e aggiungile.', true); return }
@@ -558,9 +596,14 @@ function apriAssegna(p) {
     var personaSel = p.chiave && p.chiave.indexOf('p:') === 0 ? p.chiave.slice(2) : ''
     h += '<h3>Nuova assegnazione</h3><div class="campi">' +
       '<div class="campo"><label for="as-persona">Persona</label><select id="as-persona">' +
+      '<optgroup label="Dipendenti">' +
       ST.persone.map(function (x) { return '<option value="p:' + x.id + '"' + (x.id === personaSel ? ' selected' : '') + '>' + esc(x.nome) + '</option>' }).join('') +
       [1, 2, 3].map(function (n) { return '<option value="s:' + n + '"' + (p.chiave && p.chiave === 's:' + p.commessa_id + ':' + n ? ' selected' : '') + '>Persona ' + n + ' (da decidere)</option>' }).join('') +
-      '</select></div>' +
+      '</optgroup>' +
+      (ST.esterni.length ? '<optgroup label="Esterni (altre ditte)">' + ST.esterni.map(function (x) {
+        return '<option value="p:' + x.id + '"' + (x.id === personaSel ? ' selected' : '') + '>' + esc(x.nome + ' — ' + x.etichetta) + '</option>'
+      }).join('') + '</optgroup>' : '') +
+      '</select><span class="etichetta-esterno" id="as-esterno" hidden></span></div>' +
       '<div class="campo"><label for="as-commessa">Commessa</label><select id="as-commessa">' +
       commesseScelta().map(function (c) { return '<option value="' + c.id + '"' + (c.id === (p.commessa_id || (p.chiave && p.chiave.split(':')[1])) ? ' selected' : '') + '>' + esc(c.numero + ' ' + c.nome) + '</option>' }).join('') +
       '</select></div></div>' +
@@ -590,6 +633,15 @@ function apriAssegna(p) {
     }
     selC.addEventListener('change', aggiornaRapidi)
     aggiornaRapidi()
+    // v6: Esterno scelto → etichetta con la ditta, ben visibile
+    function aggiornaEsterno() {
+      var el = w.corpo.querySelector('#as-esterno')
+      var est = selP.value.indexOf('p:') === 0 && ST.esterni.find(function (x) { return x.id === selP.value.slice(2) })
+      el.hidden = !est
+      el.textContent = est ? est.etichetta : ''
+    }
+    selP.addEventListener('change', aggiornaEsterno)
+    aggiornaEsterno()
     w.corpo.querySelector('#as-chiudi').addEventListener('click', w.chiudi)
     w.corpo.querySelector('#as-salva').addEventListener('click', function () {
       esegui(async function () {
@@ -1328,7 +1380,8 @@ function apriRiempi(c, dataProposta, schedaW) {
   w.corpo.innerHTML = '<p>Ore da coprire: <strong>' + fOre(ore) + '</strong> (preventivo).</p><div class="campi">' +
     campo('Data inizio', '<input id="ri-data" type="date" value="' + esc(inizio) + '">') + '</div>' +
     '<h3>Persone</h3><p><label><input type="radio" name="ri-modo" value="nomi" checked> Con nome</label> &nbsp; <label><input type="radio" name="ri-modo" value="numero"> Solo il numero (nomi da decidere)</label></p>' +
-    '<div id="ri-nomi">' + ST.persone.map(function (p) { return '<p><label><input type="checkbox" value="' + p.id + '"> ' + esc(p.nome) + '</label></p>' }).join('') + '</div>' +
+    '<div id="ri-nomi">' + ST.persone.map(function (p) { return '<p><label><input type="checkbox" value="' + p.id + '"> ' + esc(p.nome) + '</label></p>' }).join('') +
+    (ST.esterni.length ? '<p class="aiuto" id="ri-nota-esterni">👷 Gli Esterni (' + ST.esterni.length + ') non sono in questo elenco: «Riempi» usa solo i Dipendenti. Un Esterno si assegna a mano, cliccando la sua cella nella vista Persone.</p>' : '') + '</div>' +
     '<div id="ri-numero" hidden>' + campo('Quante persone', '<input id="ri-quante" inputmode="numeric" value="' + (c.persone_previste || 2) + '">', 'persone') + '</div>' +
     '<p class="esito attenzione" id="ri-sostituisce" hidden></p>' +
     '<div class="riga-bottoni"><button type="button" class="primario" id="ri-vai">Riempi</button><button type="button" id="ri-annulla">Annulla</button></div><div id="ri-esito"></div>'
@@ -1387,7 +1440,7 @@ function apriRiempi(c, dataProposta, schedaW) {
           piano = C.riempiConChiusura(p, ch, 'sposta_dopo')
           p.dataInizio = piano.assegnazioni.length ? piano.assegnazioni[0].data : p.dataInizio
         } else if (scelta.id === 'lavora_durante') {
-          var lista = C.pianoLavoraDurante({ assCommessa: piano.assegnazioni, chiusura: ch, personeScelte: scelta.persone, cal: ST.cal, commessa: c, viaggioIncluso: viaggioIncluso(), assenze: ST.dati.assenze })
+          var lista = C.pianoLavoraDurante({ assCommessa: piano.assegnazioni, chiusura: ch, personeScelte: scelta.persone, cal: ST.cal, commessa: c, viaggioIncluso: viaggioIncluso(), assenze: ST.dati.assenze, esterni: ST.esterniSet })
           piano = { assegnazioni: lista, fine: lista.map(function (a) { return a.data }).sort().pop(), oreNonCoperte: piano.oreNonCoperte }
         }
       }
@@ -1438,7 +1491,7 @@ function calcolaMargini(c) {
   var imp = ST.dati.imp
   return {
     pioggia: C.marginePioggia({ date: r.date, meteo: ST.meteoMap, recupero: imp.recupero_pioggia, quotaAperto: r.quotaAperto, stazione: nomeStazione() }),
-    malattia: C.margineMalattia({ assegnazioni: ST.assPer[c.id] || [], cal: ST.cal, giorniAnno: imp.malattia_giorni_anno, quotaInverno: imp.malattia_quota_inverno })
+    malattia: C.margineMalattia({ assegnazioni: ST.assPer[c.id] || [], cal: ST.cal, giorniAnno: imp.malattia_giorni_anno, quotaInverno: imp.malattia_quota_inverno, esterni: ST.esterniSet })
   }
 }
 function sezioneMargini(c) {
@@ -1557,9 +1610,11 @@ async function azioneAvviso(a, z) {
     var orePrev = rie(c).orePreventivo
     if (!(orePrev > 0)) { mostraErrore(c.numero + ' non ha ore nei capitoli: non si può ricalcolare.'); return }
     var nuovo = C.pianoRicalcola(ass, { oreTotali: orePrev, cal: ST.cal, commessa: c, assenze: ST.dati.assenze, viaggioIncluso: viaggioIncluso(),
-      altreAssegnazioni: ST.dati.assegnazioni.filter(function (x) { return x.commessa_id !== c.id }) })
+      altreAssegnazioni: ST.dati.assegnazioni.filter(function (x) { return x.commessa_id !== c.id }), esterni: ST.esterniSet })
+    if (nuovo.soloEsterni) { mostraErrore(c.numero + ' ha solo Esterni: «Ricalcola» usa solo i Dipendenti. Le ore degli Esterni si cambiano a mano.'); return }
     if (!await conferma('Ricalcolare <strong>' + esc(c.numero + ' ' + c.nome) + '</strong> con le ore del nuovo periodo? Si rifà «Riempi» con le stesse persone dal ' +
-      gAnno(ass.map(function (x) { return x.data }).sort()[0]) + ': nuova fine ' + gAnno(nuovo.fine) + '.<br><strong>Le modifiche fatte a mano su questa commessa si perdono.</strong>', { si: 'Ricalcola' })) return
+      gAnno(ass.map(function (x) { return x.data }).sort()[0]) + ': nuova fine ' + gAnno(nuovo.fine) + '.<br><strong>Le modifiche fatte a mano su questa commessa si perdono.</strong>' +
+      (ass.some(function (x) { return x.persona_id && ST.esterniSet[x.persona_id] }) ? '<br>Le righe degli Esterni restano come sono.' : ''), { si: 'Ricalcola' })) return
     await applicaPiano(c.id, nuovo.assegnazioni, c.numero + ' ricalcolata: fine ' + C.fmtGiorno(nuovo.fine), { ripianificato: true })
   } else if (a.tipo === 6) {
     var ch = a.chiusura
@@ -1572,7 +1627,7 @@ async function azioneAvviso(a, z) {
     } else if (z.id === 'lavora_durante') {
       var scelte = await scegliPersone('Chi lavora durante la chiusura?', 'Le ore lavorate in chiusura avranno la nota «ferie da recuperare».')
       if (!scelte || !scelte.length) return
-      var piano = C.pianoLavoraDurante({ assCommessa: ass, chiusura: ch, personeScelte: scelte, cal: ST.cal, commessa: c, viaggioIncluso: viaggioIncluso(), assenze: ST.dati.assenze })
+      var piano = C.pianoLavoraDurante({ assCommessa: ass, chiusura: ch, personeScelte: scelte, cal: ST.cal, commessa: c, viaggioIncluso: viaggioIncluso(), assenze: ST.dati.assenze, esterni: ST.esterniSet })
       var inCh = piano.filter(function (x) { return x.nota === 'ferie da recuperare' })
       if (!await conferma(esc(scelte.map(function (s) { return ST.nomi[s] }).join(', ')) + ' lavora su ' + esc(c.numero) + ' durante la chiusura: ' + inCh.length + ' giornate, ' + fOre(C.sommaOre(inCh)) + ' (ferie da recuperare). Confermi?')) return
       await applicaPiano(c.id, piano, 'Piano aggiornato: ferie da recuperare segnate')
@@ -1868,6 +1923,8 @@ function collegaBarra() {
   avviaTrascinamento()
 }
 async function avvio() {
+  // v6: la scritta del login segue sempre PL_CONFIG (nella v5 era rimasta «versione 4»)
+  document.querySelectorAll('.piccola-versione').forEach(function (p) { p.textContent = 'versione ' + PL_CONFIG.VERSIONE })
   collegaBarra()
   D.sb.auth.onAuthStateChange(function (evento) {
     if (evento === 'SIGNED_OUT' && ST.dati) mostraLogin('Sessione chiusa: entra di nuovo.')

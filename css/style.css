@@ -322,3 +322,16 @@ button.voce-commessa:hover { background: var(--primary-lt); }
   .tab-capitoli button.ubicazione { min-width: 0; }
   .tab-capitoli tfoot th:empty { display: none; }
 }
+
+/* v6: Esterni (altre ditte) — gruppo a parte nella vista Persone, etichetta con la ditta.
+   Scritta sempre presente (mai solo colore), va a capo a 390 px. */
+.etichetta-esterno { display: block; margin: 3px 0 2px; padding: 2px 8px; border: 2px solid #9a3412; border-radius: 6px; background: #ffedd5; color: #7c2d12; font-weight: 700; font-size: .9rem; line-height: 1.25; white-space: normal; overflow-wrap: anywhere; }
+.etichetta-esterno[hidden] { display: none; }
+#as-esterno { margin-top: 6px; font-size: 1rem; }
+table.gantt tr.riga-gruppo td { background: #ffedd5; border-top: 3px solid #9a3412; }
+table.gantt td.testa.gruppo-esterni { background: #ffedd5; color: #7c2d12; font-size: 1.05rem; }
+table.gantt td.testa.gruppo-esterni .sottoriga { color: #7c2d12; white-space: normal; }
+table.gantt tr.riga-esterno td.testa { border-left: 6px solid #9a3412; }
+@media (max-width: 600px) {
+  .etichetta-esterno { font-size: .85rem; padding: 2px 6px; }
+}
