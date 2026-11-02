@@ -1,0 +1,10 @@
+SheetJS Community Edition 0.20.3 (xlsx.full.min.js)
+Fonte ufficiale: https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js
+Licenza: Apache-2.0 (testo completo in xlsx-0.20.3.LICENSE.txt)
+Scaricata una volta il 2.11.2026. SHA-256:
+cc015130aa8521e7f088f88898eba949ccdcbfb38df0bd129b44b7273c3a6f41
+La pagina la carica da qui (lib/xlsx-0.20.3.full.min.js?v=4), mai da internet.
+Scelta 0.20.3 invece di 0.18.5: la 0.18.5 ha due falle note con file costruiti apposta
+(CVE-2023-30533, CVE-2024-22363), corrette nelle versioni successive.
+Non modificare il file. Per aggiornare: scaricare la nuova versione dalla fonte ufficiale,
+nuovo nome file, aggiornare index.html e i test.

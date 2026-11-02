@@ -269,37 +269,7 @@
     return null
   }
 
-  // ── Import capitoli incollati (Zoho Sheet / Excel) ────────────────────────
-  // 2 o 3 colonne separate da tab: capitolo | ore | [coperto]
-  var PAROLE_COPERTO = ['coperto', 'al coperto', 'interno', 'c', 'x']
-  function leggiCapitoliIncollati(testo) {
-    var valide = [], scartate = []
-    String(testo || '').split(/\r?\n/).forEach(function (riga, i) {
-      var n = i + 1
-      if (riga.trim() === '') return                       // riga vuota: ignorata
-      var col = riga.split('\t')
-      var nome = (col[0] || '').trim()
-      if (col.length < 2) {
-        scartate.push({ riga: n, testo: riga, motivo: 'Manca la colonna delle ore (le colonne vanno separate da tabulazione)' }); return
-      }
-      var oreTesto = (col[1] || '').trim()
-      if (!nome) { scartate.push({ riga: n, testo: riga, motivo: 'Manca il nome del capitolo' }); return }
-      if (oreTesto === '') { scartate.push({ riga: n, testo: riga, motivo: 'Mancano le ore' }); return }
-      var ore = leggiOre(oreTesto)
-      if (isNaN(ore)) { scartate.push({ riga: n, testo: riga, motivo: 'Ore non leggibili: «' + oreTesto + '»' }); return }
-      if (ore <= 0) { scartate.push({ riga: n, testo: riga, motivo: 'Ore zero o negative' }); return }
-      var terza = (col[2] || '').trim().toLowerCase()
-      var nota = ''
-      var ubicazione = 'All\'aperto'
-      if (terza !== '') {
-        if (PAROLE_COPERTO.indexOf(terza) >= 0) ubicazione = 'Al coperto'
-        else nota = 'Terza colonna «' + col[2].trim() + '» non riconosciuta: considerato All\'aperto'
-      }
-      valide.push({ riga: n, nome: nome, ore: Math.round(ore * 100) / 100, ubicazione: ubicazione, nota: nota })
-    })
-    var totale = valide.reduce(function (s, x) { return s + x.ore }, 0)
-    return { valide: valide, scartate: scartate, totale: Math.round(totale * 100) / 100 }
-  }
+  // (v4: il vecchio «Incolla dal foglio» è stato tolto: ora c'è «Carica offerta Excel», js/offerta_ore.js)
 
   // ── Riempi automaticamente ────────────────────────────────────────────────
   // Divide `resto` ore fra n persone in passi da mezz'ora, il più equo possibile.
@@ -1245,7 +1215,7 @@
     eLavorativo: eLavorativo, oreBase: oreBase, oreGiornataCommessa: oreGiornataCommessa, oreCantiere: oreCantiere,
     spostaLavorativi: spostaLavorativi, giorniLavorativiFra: giorniLavorativiFra,
     // pianificazione
-    chiavePersona: chiavePersona, assenzaDi: assenzaDi, leggiCapitoliIncollati: leggiCapitoliIncollati,
+    chiavePersona: chiavePersona, assenzaDi: assenzaDi,
     dividiInMezzore: dividiInMezzore, riempiAutomatico: riempiAutomatico, sommaOre: sommaOre,
     riepilogoCommessa: riepilogoCommessa, caricoGiorno: caricoGiorno,
     // margini

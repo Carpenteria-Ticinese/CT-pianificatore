@@ -257,3 +257,55 @@ button.voce-commessa:hover { background: var(--primary-lt); }
   .marchio img { width: 30px; height: 30px; }
   .azioni-barra button { white-space: normal; }
 }
+
+/* ── Versione 4: «Carica offerta Excel» ──────────────────────────────────── */
+.file-nascosto { position: absolute; width: 1px; height: 1px; opacity: 0; overflow: hidden; }
+.tasto-file { display: inline-flex; align-items: center; gap: 8px; min-height: 56px; padding: 10px 20px; border: 2px solid var(--primary); border-radius: var(--radius); background: var(--primary); color: #fff; font-size: 1.1rem; font-weight: 700; cursor: pointer; }
+.tasto-file:hover { background: var(--primary-hi); }
+.file-nascosto:focus-visible + .tasto-file { outline: 3px solid #f59e0b; outline-offset: 2px; }
+#off-esito { margin-top: 10px; }
+#off-esito .esito { overflow-wrap: anywhere; }
+.off-gruppo { display: flex; flex-direction: column; gap: 10px; margin: 10px 0; }
+.off-gruppo.esterni { padding: 10px; border: 2px dashed var(--warn); border-radius: var(--radius); background: #fffbeb; }
+.off-gruppo.esterni h4 { margin: 0; font-size: 1.1rem; color: var(--warn); }
+.off-cap { border: 2px solid var(--border-lt); border-left: 8px solid var(--border); border-radius: var(--radius); padding: 8px 10px; background: var(--surface); }
+.off-cap.scelto { border-left-color: var(--primary); background: var(--primary-lt); }
+.off-cap.esterno.scelto { border-left-color: var(--warn); background: var(--warn-bg); }
+.off-spunta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; min-height: 52px; cursor: pointer; font-size: 1.05rem; }
+.off-spunta input[type=checkbox], .off-spunta-voce input[type=checkbox], .off-scelta input[type=radio] { width: 30px; height: 30px; min-height: 0; flex: none; margin: 0; cursor: pointer; accent-color: var(--primary); }
+.off-nome { flex: 1 1 180px; font-weight: 700; overflow-wrap: anywhere; }
+.off-ore { font-weight: 700; font-size: 1.1rem; white-space: nowrap; }
+.off-ore.vuoto { font-weight: 400; color: var(--text3); font-size: .95rem; }
+.off-sotto { color: var(--text2); font-size: .9rem; margin: 2px 0 4px 42px; }
+.off-avv { color: var(--warn); font-weight: 600; }
+.off-etichetta { display: inline-block; padding: 0 6px; border: 1px solid var(--text3); border-radius: 999px; font-size: .8rem; font-weight: 600; color: var(--text2); background: #fff; white-space: nowrap; }
+.off-etichetta.est { border-color: var(--warn); color: var(--warn); background: var(--warn-bg); }
+.off-cap details { margin: 4px 0 0 0; }
+.off-cap summary { min-height: 44px; display: flex; align-items: center; padding: 4px 10px; border: 2px solid var(--border); border-radius: var(--radius); cursor: pointer; font-weight: 600; width: fit-content; max-width: 100%; }
+.off-voce { border-top: 1px solid var(--border-lt); padding: 6px 0; }
+.off-voce.con-avviso { background: #fffbeb; }
+.off-spunta-voce { display: flex; align-items: flex-start; gap: 10px; min-height: 40px; cursor: pointer; font-weight: 400; }
+.off-testo { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.off-niente { flex: none; width: 30px; text-align: center; font-size: .8rem; color: var(--text3); }
+.off-calc { margin-left: 40px; color: var(--text2); font-size: .9rem; overflow-wrap: anywhere; }
+.off-avviso { margin-left: 40px; color: var(--warn); font-weight: 600; font-size: .9rem; overflow-wrap: anywhere; }
+.off-riepilogo { margin: 12px 0 6px; padding: 10px 12px; border: 2px solid var(--primary); border-radius: var(--radius); background: var(--primary-lt); overflow-wrap: anywhere; }
+.off-riepilogo ol { margin: 6px 0 0; padding-left: 1.4rem; }
+.off-modo { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
+.off-scelta { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 6px 10px; border: 2px solid var(--border); border-radius: var(--radius); background: #fff; cursor: pointer; overflow-wrap: anywhere; }
+#off-esito button.grande { white-space: normal; }
+@media (max-width: 600px) {
+  .off-sotto, .off-calc, .off-avviso { margin-left: 0; }
+  .tasto-file { width: 100%; justify-content: center; }
+}
+/* v4: a 390 px la tabella dei capitoli va a righe (prima usciva a destra nella scheda) */
+@media (max-width: 600px) {
+  table.tab-capitoli, .tab-capitoli tbody, .tab-capitoli tfoot { display: block; width: 100%; }
+  .tab-capitoli thead { display: none; }
+  .tab-capitoli tr { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 8px 0; border-bottom: 1px solid var(--border-lt); }
+  table.tab-capitoli td, table.tab-capitoli th { border: 0; padding: 0; }
+  .tab-capitoli td:nth-child(2) { flex: 1 1 calc(100% - 40px); min-width: 0; }
+  .tab-capitoli input[data-cap-nome] { width: 100%; }
+  .tab-capitoli button.ubicazione { min-width: 0; }
+  .tab-capitoli tfoot th:empty { display: none; }
+}

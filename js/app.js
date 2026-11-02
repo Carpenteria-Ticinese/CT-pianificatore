@@ -10,6 +10,7 @@
    ═══════════════════════════════════════════════════════════════════════════ */
 'use strict'
 var C = window.PLC, V = window.PLViaggio, D = window.PLD
+var O = window.CTOffertaOre    // v4: «Carica offerta Excel» (js/offerta_ore.js)
 
 var ST = {
   dati: null, profilo: null, email: '',
@@ -939,7 +940,7 @@ function sezioneCapitoli(c) {
   var aperto = C.sommaOre(caps.filter(function (x) { return x.ubicazione !== 'Al coperto' }))
   var h = '<div class="sezione"><h3>📋 Capitoli del preventivo</h3>'
   if (caps.length) {
-    h += '<table class="elenco"><thead><tr><th>#</th><th>Capitolo</th><th class="num">Ore</th><th>Dove</th><th></th></tr></thead><tbody>' +
+    h += '<table class="elenco tab-capitoli"><thead><tr><th>#</th><th>Capitolo</th><th class="num">Ore</th><th>Dove</th><th></th></tr></thead><tbody>' +
       caps.map(function (x, i) {
         var cop = x.ubicazione === 'Al coperto'
         return '<tr><td>' + (i + 1) + '</td><td><input data-cap-nome="' + x.id + '" value="' + esc(x.nome) + '" aria-label="Nome capitolo"></td>' +
@@ -947,15 +948,172 @@ function sezioneCapitoli(c) {
           '<td><button type="button" class="ubicazione ' + (cop ? 'coperto' : 'aperto') + '" data-cap-ubi="' + x.id + '" aria-label="Ubicazione: ' + esc(x.ubicazione) + ', clic per cambiare">' + (cop ? '🏠 Al coperto' : '☀ All\'aperto') + '</button></td>' +
           '<td><button type="button" class="piccolo pericolo" data-cap-togli="' + x.id + '">Togli</button></td></tr>'
       }).join('') + '</tbody><tfoot><tr><th></th><th>Totale</th><th class="num">' + fOre(tot) + '</th><th colspan="2">all\'aperto ' + f(tot ? aperto / tot * 100 : 0, 0) + '%</th></tr></tfoot></table>'
-  } else h += '<p class="aiuto">Nessun capitolo. Incollali dal foglio qui sotto, o aggiungili uno alla volta.</p>'
-  h += '<h3>Aggiungi un capitolo</h3><div class="campi">' + campo('Capitolo', '<input id="cap-nuovo-nome">') +
+  } else h += '<p class="aiuto">Nessun capitolo. Caricali dall\'offerta Excel qui sotto, o aggiungili uno alla volta.</p>'
+  h += '<h3>📄 Carica offerta Excel</h3>' +
+    '<p class="aiuto">Scegli il file dell\'offerta (.xlsx o .xls). Si legge solo qui, su questo computer: il file non viene caricato da nessuna parte. Ore di ogni voce = quantità × minuti ÷ 60.</p>' +
+    '<input type="file" id="off-file" class="file-nascosto" accept=".xlsx,.xlsm,.xls">' +
+    '<label for="off-file" class="tasto-file" id="off-tasto">📂 Carica offerta Excel…</label>' +
+    '<div id="off-esito">' + (OFF[c.id] ? htmlOfferta(c, OFF[c.id]) : '') + '</div>'
+  h += '<h3>Aggiungi un capitolo a mano</h3><div class="campi">' + campo('Capitolo', '<input id="cap-nuovo-nome">') +
     campo('Ore', '<input id="cap-nuovo-ore" inputmode="decimal" placeholder="12,5 o 12:30">', 'h') +
     campo('Dove', '<select id="cap-nuovo-ubi"><option>All\'aperto</option><option>Al coperto</option></select>') + '</div>' +
-    '<div class="riga-bottoni"><button type="button" id="cap-aggiungi">+ Aggiungi capitolo</button></div>' +
-    '<h3>Incolla dal foglio (Zoho Sheet o Excel)</h3><p class="aiuto">Seleziona 2 o 3 colonne nel foglio: capitolo | ore | [coperto] e incolla qui. Ore: 12.5, 12,5 o 12:30. Terza colonna vuota = All\'aperto; «coperto», «interno», «c» o «x» = Al coperto.</p>' +
-    '<textarea id="cap-incolla" aria-label="Capitoli incollati"></textarea>' +
-    '<div class="riga-bottoni"><button type="button" id="cap-anteprima">👁️ Anteprima</button></div><div id="cap-anteprima-esito"></div></div>'
+    '<div class="riga-bottoni"><button type="button" id="cap-aggiungi">+ Aggiungi capitolo</button></div></div>'
   return h
+}
+
+// ── v4 · «Carica offerta Excel» ─────────────────────────────────────────────
+// L'offerta letta resta qui (per commessa) finché si conferma o si annulla: se la scheda si ridisegna
+// (es. cambio di un capitolo) le spunte non si perdono. Il file non lascia mai il browser.
+var OFF = {}
+function oreTot(st, cap, esterno) {
+  return cap.voci.reduce(function (s, v) { return s + (v.esterno === esterno && st.scelte[v.id] ? v.ore : 0) }, 0)
+}
+function htmlCapOfferta(st, cap, esterno) {
+  var voci = cap.voci.filter(function (v) { return v.esterno === esterno })
+  var tot = voci.reduce(function (s, v) { return s + v.ore }, 0)
+  var nAvv = voci.filter(function (v) { return v.avvisi.length }).length
+  var chiave = cap.id + (esterno ? 'e' : 'i')
+  var h = '<div class="off-cap' + (esterno ? ' esterno' : '') + '" data-off-blocco="' + chiave + '">' +
+    '<label class="off-spunta"><input type="checkbox" data-off-cap="' + chiave + '"' + (tot > 0 ? '' : ' disabled') + '>' +
+    '<span class="off-nome">' + esc(cap.titolo) + (esterno ? ' <span class="off-etichetta est">🚚 ' + esc(O.SCRITTA_ESTERNO) + '</span>' : '') + '</span>' +
+    '<span class="off-ore" data-off-ore="' + chiave + '"></span></label>' +
+    '<div class="off-sotto">Nell\'offerta: ' + fOre(tot) + ' · ' + voci.length + (voci.length === 1 ? ' voce' : ' voci') +
+    (nAvv ? ' · <span class="off-avv">⚠️ ' + nAvv + (nAvv === 1 ? ' voce' : ' voci') + ' con quantità o minuti vuoti</span>' : '') + (tot > 0 ? '' : ' · niente da creare (0 h)') + '</div>' +
+    '<details><summary>Vedi le voci (' + voci.length + ')</summary>' +
+    voci.map(function (v) {
+      var calc = (v.q === null ? '—' : f(v.q, 2)) + ' ' + esc(v.unita || '') + ' × ' + (v.minuti === null ? '—' : f(v.minuti, 1)) + ' min ÷ 60 = <strong>' + fOre(v.ore) + '</strong>'
+      var etich = (v.eventuale ? ' <span class="off-etichetta">eventuale</span>' : '') + (v.incluso ? ' <span class="off-etichetta">inclusa</span>' : '')
+      return '<div class="off-voce' + (v.avvisi.length ? ' con-avviso' : '') + '">' +
+        (v.ore > 0
+          ? '<label class="off-spunta-voce"><input type="checkbox" data-off-voce="' + v.id + '"' + (st.scelte[v.id] ? ' checked' : '') + '>'
+          : '<div class="off-spunta-voce"><span class="off-niente" title="0 ore: niente da spuntare">0 h</span>') +
+        '<span class="off-testo">riga ' + v.riga + (v.codice ? ' · ' + esc(v.codice) : '') + ' · ' + esc(v.testo.length > 140 ? v.testo.slice(0, 137) + '…' : v.testo || '(senza descrizione)') + etich + '</span>' +
+        (v.ore > 0 ? '</label>' : '</div>') +
+        '<div class="off-calc">' + calc + '</div>' +
+        v.avvisi.map(function (a) { return '<div class="off-avviso">⚠️ ' + esc(a) + '</div>' }).join('') + '</div>'
+    }).join('') + '</details></div>'
+  return h
+}
+function htmlOfferta(c, st) {
+  var a = st.analisi
+  var esistenti = (ST.capPer[c.id] || []).slice().sort(function (x, y) { return x.ordine - y.ordine })
+  var h = '<div class="esito ok">✔ Offerta letta: <strong>' + esc(st.nomeFile) + '</strong> · ' + a.capitoli.length + ' capitoli · ' +
+    fOre(a.oreInterne) + ' della ditta' + (a.nEsterne ? ' · ' + fOre(a.oreEsterne) + ' esterne' : '') + '</div>' +
+    st.avvisi.map(function (x) { return '<div class="esito attenzione">⚠️ ' + esc(x) + '</div>' }).join('') +
+    '<p class="aiuto">Spunta i capitoli che vuoi nel Calendario. Con «Vedi le voci» spunti o togli le singole voci. Le voci «eventuale» non sono spuntate: spuntale se il cliente le ha prese.</p>'
+  var interni = a.capitoli.filter(function (cap) { return cap.nInterne })
+  h += '<div class="off-gruppo">' + interni.map(function (cap) { return htmlCapOfferta(st, cap, false) }).join('') + '</div>'
+  var est = a.capitoli.filter(function (cap) { return cap.nEsterne })
+  if (est.length) {
+    h += '<div class="off-gruppo esterni"><h4>🚚 Esterno - solo tempistica</h4>' +
+      '<p class="aiuto">Voci con minuti ma senza costo cantiere (es. lattonieri esterni): ' + fOre(a.oreEsterne) + '. Non sono spuntate. Se le spunti diventano un capitolo a parte, con «(' + esc(O.SCRITTA_ESTERNO) + ')» nel nome.</p>' +
+      '<div class="esito attenzione">⚠️ Nel Calendario anche queste ore entrano nelle ore del preventivo e «Riempi automaticamente» le darebbe alla squadra.</div>' +
+      est.map(function (cap) { return htmlCapOfferta(st, cap, true) }).join('') + '</div>'
+  }
+  h += '<div class="off-riepilogo" id="off-riepilogo"></div>'
+  if (esistenti.length) {
+    h += '<div class="esito attenzione">⚠️ Questa commessa ha già ' + esistenti.length + (esistenti.length === 1 ? ' capitolo' : ' capitoli') + ' (' + fOre(C.sommaOre(esistenti)) + '). Scegli:</div>' +
+      '<div class="off-modo" role="radiogroup" aria-label="Capitoli che ci sono già">' +
+      '<label class="off-scelta"><input type="radio" name="off-modo" value="aggiungi"' + (st.modo === 'aggiungi' ? ' checked' : '') + '> ➕ Aggiungi in fondo (quelli di adesso restano)</label>' +
+      '<label class="off-scelta"><input type="radio" name="off-modo" value="sostituisci"' + (st.modo === 'sostituisci' ? ' checked' : '') + '> 🔁 Sostituisci: si tolgono ' + esc(esistenti.map(function (x) { return x.nome + ' (' + fOre(x.ore) + ')' }).join(', ')) + '</label></div>'
+  }
+  h += '<div class="riga-bottoni"><button type="button" class="primario grande" id="off-conferma">✔ Crea i capitoli</button><button type="button" class="grande" id="off-annulla">Annulla</button></div><div id="off-conferma-esito"></div>'
+  return h
+}
+// Aggiorna ore, spunte dei capitoli e riepilogo dopo ogni clic
+function aggiornaOfferta(box, c) {
+  var st = OFF[c.id]
+  if (!st) return
+  st.analisi.capitoli.forEach(function (cap) {
+    ;[false, true].forEach(function (esterno) {
+      var chiave = cap.id + (esterno ? 'e' : 'i')
+      var cb = box.querySelector('[data-off-cap="' + chiave + '"]')
+      if (!cb) return
+      var conOre = cap.voci.filter(function (v) { return v.esterno === esterno && v.ore > 0 })
+      var scelte = conOre.filter(function (v) { return st.scelte[v.id] })
+      cb.checked = scelte.length > 0
+      cb.indeterminate = scelte.length > 0 && scelte.length < conOre.length
+      var o = box.querySelector('[data-off-ore="' + chiave + '"]')
+      o.textContent = scelte.length ? fOre(oreTot(st, cap, esterno)) : 'non spuntato'
+      o.classList.toggle('vuoto', !scelte.length)
+      box.querySelector('[data-off-blocco="' + chiave + '"]').classList.toggle('scelto', scelte.length > 0)
+    })
+  })
+  box.querySelectorAll('[data-off-voce]').forEach(function (x) { x.checked = !!st.scelte[x.dataset.offVoce] })
+  var p = O.proponiCapitoli(st.analisi, st.scelte)
+  var r = box.querySelector('#off-riepilogo')
+  r.innerHTML = p.nuovi.length
+    ? '<strong>Si creano ' + p.nuovi.length + (p.nuovi.length === 1 ? ' capitolo' : ' capitoli') + ', totale ' + fOre(p.totale) + '</strong> (tutti «All\'aperto», poi li puoi cambiare):' +
+      '<ol>' + p.nuovi.map(function (x) { return '<li>' + esc(x.nome) + ' · <strong>' + fOre(x.ore) + '</strong></li>' }).join('') + '</ol>'
+    : '<strong>Niente spuntato:</strong> spunta almeno un capitolo.'
+  var b = box.querySelector('#off-conferma')
+  b.disabled = !p.nuovi.length
+  b.textContent = p.nuovi.length ? '✔ Crea ' + p.nuovi.length + (p.nuovi.length === 1 ? ' capitolo' : ' capitoli') + ' (' + fOre(p.totale) + ')' : '✔ Crea i capitoli'
+}
+function collegaOfferta(w, c) {
+  var q = function (s) { return w.corpo.querySelector(s) }
+  var box = q('#off-esito')
+  q('#off-file').addEventListener('change', function (e) {
+    var file = e.target.files && e.target.files[0]
+    e.target.value = ''                                 // lo stesso file si può riscegliere
+    if (!file) return
+    box.innerHTML = '<div class="esito attenzione">⏳ Lettura di «' + esc(file.name) + '» in corso…</div>'
+    esegui(async function () {
+      var buf = await file.arrayBuffer()                // dal disco alla memoria del browser: niente rete
+      await new Promise(function (r) { setTimeout(r, 30) })   // lascia comparire la scritta
+      var ris = O.leggiOfferta(window.XLSX, window.CTImporta, new Uint8Array(buf), file.name, file.size)
+      if (!ris.ok) { delete OFF[c.id]; box.innerHTML = '<div class="esito ko">❌ ' + esc(ris.messaggio) + '</div>'; return }
+      OFF[c.id] = { nomeFile: file.name, analisi: ris.analisi, avvisi: ris.avvisi, scelte: O.scelteIniziali(ris.analisi), modo: null }
+      box.innerHTML = htmlOfferta(c, OFF[c.id])
+      collegaAnteprimaOfferta(w, c)
+    })
+  })
+  if (OFF[c.id]) collegaAnteprimaOfferta(w, c)
+}
+function collegaAnteprimaOfferta(w, c) {
+  var box = w.corpo.querySelector('#off-esito')
+  var st = OFF[c.id]
+  box.querySelectorAll('[data-off-voce]').forEach(function (x) {
+    x.addEventListener('change', function () { st.scelte[x.dataset.offVoce] = x.checked; aggiornaOfferta(box, c) })
+  })
+  box.querySelectorAll('[data-off-cap]').forEach(function (x) {
+    x.addEventListener('change', function () {
+      var cap = st.analisi.capitoli.find(function (k) { return k.id === x.dataset.offCap.slice(0, -1) })
+      var esterno = x.dataset.offCap.slice(-1) === 'e'
+      var conOre = cap.voci.filter(function (v) { return v.esterno === esterno && v.ore > 0 })
+      var qualcuna = conOre.some(function (v) { return st.scelte[v.id] })
+      // spunta: le voci con ore, senza le «eventuale» (se ci sono solo eventuali, anche quelle); togli: tutte
+      var daSpuntare = conOre.filter(function (v) { return !v.eventuale })
+      if (!daSpuntare.length) daSpuntare = conOre
+      conOre.forEach(function (v) { st.scelte[v.id] = false })
+      if (!qualcuna) daSpuntare.forEach(function (v) { st.scelte[v.id] = true })
+      aggiornaOfferta(box, c)
+    })
+  })
+  box.querySelectorAll('input[name="off-modo"]').forEach(function (x) {
+    x.addEventListener('change', function () { st.modo = x.value })
+  })
+  box.querySelector('#off-annulla').addEventListener('click', function () { delete OFF[c.id]; box.innerHTML = '' })
+  box.querySelector('#off-conferma').addEventListener('click', function () {
+    esegui(async function () {
+      var es = box.querySelector('#off-conferma-esito')
+      var p = O.proponiCapitoli(st.analisi, st.scelte)
+      if (!p.nuovi.length) { es.innerHTML = '<div class="esito ko">Niente spuntato: spunta almeno un capitolo.</div>'; return }
+      var esistenti = (ST.capPer[c.id] || []).slice()
+      if (esistenti.length && st.modo !== 'aggiungi' && st.modo !== 'sostituisci') {
+        es.innerHTML = '<div class="esito ko">Questa commessa ha già dei capitoli: scegli sopra «Aggiungi in fondo» o «Sostituisci».</div>'; return
+      }
+      var sost = esistenti.length > 0 && st.modo === 'sostituisci'
+      if (sost && !await conferma('Togliere i ' + esistenti.length + ' capitoli che ci sono adesso (' + esc(esistenti.map(function (x) { return x.nome + ' ' + fOre(x.ore) }).join(', ')) + ') e mettere i ' + p.nuovi.length + ' dell\'offerta (' + fOre(p.totale) + ')?<br>Le assegnazioni del piano restano come sono.', { si: 'Sostituisci', pericolo: true })) return
+      var base = sost ? 0 : esistenti.reduce(function (m, x) { return Math.max(m, x.ordine) }, 0)
+      await D.inserisci('pl_capitoli', p.nuovi.map(function (x, i) { return { commessa_id: c.id, ordine: base + i + 1, nome: x.nome, ore: x.ore, ubicazione: x.ubicazione } }))
+      if (sost) await D.eliminaId('pl_capitoli', esistenti.map(function (x) { return x.id }))
+      delete OFF[c.id]
+      await ricarica(['capitoli']); riapriScheda(w)
+      toast(p.nuovi.length + (p.nuovi.length === 1 ? ' capitolo creato' : ' capitoli creati') + ' dall\'offerta (' + fOre(p.totale) + ')' + (sost ? ', i ' + esistenti.length + ' di prima tolti' : ''))
+    })
+  })
+  aggiornaOfferta(box, c)
 }
 function collegaCapitoli(w, c) {
   var q = function (s) { return w.corpo.querySelector(s) }
@@ -1003,34 +1161,7 @@ function collegaCapitoli(w, c) {
       await ricarica(['capitoli']); riapriScheda(w)
     })
   })
-  q('#cap-anteprima').addEventListener('click', function () {
-    var r = C.leggiCapitoliIncollati(q('#cap-incolla').value)
-    var es = q('#cap-anteprima-esito')
-    if (!r.valide.length && !r.scartate.length) { es.innerHTML = '<div class="esito ko">Niente da leggere: incolla le righe del foglio.</div>'; return }
-    var esistenti = (ST.capPer[c.id] || []).length
-    var h = '<table class="elenco"><thead><tr><th>Riga</th><th>Capitolo</th><th class="num">Ore</th><th>Dove / motivo</th></tr></thead><tbody>' +
-      r.valide.map(function (x) { return '<tr><td>' + x.riga + '</td><td>' + esc(x.nome) + '</td><td class="num">' + fOre(x.ore) + '</td><td>' + (x.ubicazione === 'Al coperto' ? '🏠 Al coperto' : '☀ All\'aperto') + (x.nota ? ' · ' + esc(x.nota) : '') + '</td></tr>' }).join('') +
-      r.scartate.map(function (x) { return '<tr class="scartata"><td>' + x.riga + '</td><td colspan="2">✖ SCARTATA: ' + esc(x.testo) + '</td><td>' + esc(x.motivo) + '</td></tr>' }).join('') +
-      '</tbody><tfoot><tr><th></th><th>' + r.valide.length + ' righe valide' + (r.scartate.length ? ', ' + r.scartate.length + ' scartate' : '') + '</th><th class="num">' + fOre(r.totale) + '</th><th></th></tr></tfoot></table>'
-    if (r.valide.length) {
-      h += (esistenti ? '<p><label><input type="checkbox" id="cap-sostituisci"> Sostituisci i ' + esistenti + ' capitoli che ci sono già (altrimenti si aggiungono in fondo)</label></p>' : '') +
-        '<div class="riga-bottoni"><button type="button" class="primario" id="cap-conferma">Salva ' + r.valide.length + ' capitoli</button><button type="button" id="cap-annulla">Annulla</button></div>'
-    }
-    es.innerHTML = h
-    if (!r.valide.length) return
-    es.querySelector('#cap-annulla').addEventListener('click', function () { es.innerHTML = '' })
-    es.querySelector('#cap-conferma').addEventListener('click', function () {
-      esegui(async function () {
-        var sost = es.querySelector('#cap-sostituisci') && es.querySelector('#cap-sostituisci').checked
-        var vecchi = (ST.capPer[c.id] || []).map(function (x) { return x.id })
-        var base = sost ? 0 : (ST.capPer[c.id] || []).reduce(function (m, x) { return Math.max(m, x.ordine) }, 0)
-        await D.inserisci('pl_capitoli', r.valide.map(function (x, i) { return { commessa_id: c.id, ordine: base + i + 1, nome: x.nome, ore: x.ore, ubicazione: x.ubicazione } }))
-        if (sost && vecchi.length) await D.eliminaId('pl_capitoli', vecchi)
-        await ricarica(['capitoli']); riapriScheda(w)
-        toast(r.valide.length + ' capitoli salvati')
-      })
-    })
-  })
+  collegaOfferta(w, c)
 }
 
 // Riepilogo
