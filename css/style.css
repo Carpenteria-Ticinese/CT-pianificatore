@@ -294,8 +294,21 @@ button.voce-commessa:hover { background: var(--primary-lt); }
 .off-modo { display: flex; flex-direction: column; gap: 8px; margin: 8px 0; }
 .off-scelta { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 6px 10px; border: 2px solid var(--border); border-radius: var(--radius); background: #fff; cursor: pointer; overflow-wrap: anywhere; }
 #off-esito button.grande { white-space: normal; }
+/* v5: tipo di ore per voce (Cantiere / Ufficio / Laboratorio): tasti grandi con la scritta, usabili con i guanti */
+.off-tipo { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 2px 40px; }
+.off-tipo-btn { flex: 1 1 0; min-width: 96px; min-height: 48px; padding: 6px 8px; border: 2px solid var(--border); border-radius: var(--radius); background: #fff; color: var(--text); font-size: 1rem; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.off-tipo-btn.attivo { border-color: var(--primary); background: var(--primary); color: #fff; }
+.off-tipo-btn.attivo::after { content: ' ✔'; }
+.off-tipo-btn:focus-visible { outline: 3px solid #f59e0b; outline-offset: 2px; }
+.off-altri { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+.off-altro { padding: 8px 10px; border: 2px solid var(--border); border-radius: var(--radius); background: var(--surface); overflow-wrap: anywhere; }
+.off-altro h4 { margin: 0 0 4px; font-size: 1.05rem; }
+.off-altro ul { margin: 4px 0 0; padding-left: 1.2rem; }
+.off-altro .aiuto { margin: 2px 0 0; }
+.off-piccolo { margin: 4px 0; font-size: .9rem; color: var(--text2); }
 @media (max-width: 600px) {
-  .off-sotto, .off-calc, .off-avviso { margin-left: 0; }
+  .off-sotto, .off-calc, .off-avviso, .off-tipo { margin-left: 0; }
+  .off-tipo-btn { flex: 1 1 auto; min-width: 0; padding: 6px 8px; }   /* a 390 px: 2 righe se serve, mai parole spezzate */
   .tasto-file { width: 100%; justify-content: center; }
 }
 /* v4: a 390 px la tabella dei capitoli va a righe (prima usciva a destra nella scheda) */
