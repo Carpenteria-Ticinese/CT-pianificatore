@@ -375,3 +375,9 @@ button.chi.esterni { border-color: #9a3412; color: #7c2d12; background: #ffedd5;
   .off-ore-mano { margin-left: 0; }
   .tab-capitoli button.chi { min-width: 0; }
 }
+
+/* ── v9 · conferma di spostamento con i nomi ───────────────────────────── */
+.lista-spostamento { list-style: none; padding: 0; margin: 8px 0; display: flex; flex-direction: column; gap: 8px; }
+.lista-spostamento li { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 2px solid var(--border-lt); border-radius: var(--radius); background: var(--surface); overflow-wrap: anywhere; }
+.lista-spostamento li.esterno { border-color: #9a3412; background: #fff7ed; }
+#sp-conflitti .off-scelta { margin-top: 8px; font-weight: 600; }

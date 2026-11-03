@@ -99,6 +99,49 @@ function conferma(testoHtml, opz) {
     w.corpo.querySelector('[data-si]').focus()
   })
 }
+// v9 · conferma di uno spostamento di tutta la commessa: i NOMI di chi si sposta (Dipendenti per nome,
+// Esterni «Nome — Ditta») con le date prima → dopo. Se un Esterno finisce in giorni in cui ha già altro lavoro:
+// avviso e scelta (niente si sovrascrive; il lavoro di prima resta). Restituisce true solo se si sposta.
+function nomeSpostamento(x) {
+  if (x.esterno) {
+    var o = ST.dati.operai.find(function (k) { return k.id === x.persona_id })
+    return (ST.nomi[x.persona_id] || 'Esterno') + ' — ' + (o ? C.dittaDi(o, ST.dati.ditte) : 'ditta non leggibile')
+  }
+  return nomeChiave(x.chiave)
+}
+function confermaSpostamento(c, prima, dopo, domanda) {
+  var rs = C.riepilogoSpostamento({ prima: prima, dopo: dopo, esterni: ST.esterniSet, assTutte: ST.dati.assegnazioni, commessaId: c.id })
+  var righe = rs.persone.slice().sort(function (a, b) { return (a.esterno ? 1 : 0) - (b.esterno ? 1 : 0) })
+  var periodo = function (d, a) { return d === a ? gAnno(d) : 'dal ' + gAnno(d) + ' al ' + gAnno(a) }
+  return new Promise(function (risolvi) {
+    var fatto = false
+    var w = apriFinestra('Sposta · ' + c.numero, { centro: true, piccola: true, onChiudi: function () { if (!fatto) risolvi(false) } })
+    var h = '<p>' + domanda + '</p><p class="aiuto">Squadra ed Esterni si spostano insieme, con lo stesso scarto: l\'ordine fra le fasi non cambia.</p><ul class="lista-spostamento">' +
+      righe.map(function (x) {
+        return '<li' + (x.esterno ? ' class="esterno"' : '') + '><strong>' + (x.esterno ? '👷 ' : '') + esc(nomeSpostamento(x)) + '</strong>' +
+          '<span>prima: ' + periodo(x.dalPrima, x.alPrima) + '</span><span>dopo: <strong>' + periodo(x.dalDopo, x.alDopo) + '</strong></span>' +
+          '<span class="aiuto">' + x.righe + (x.righe === 1 ? ' giornata' : ' giornate') + ', ' + fOre(x.ore) + '</span></li>'
+      }).join('') + '</ul>'
+    if (rs.conflitti.length) {
+      h += '<div id="sp-conflitti" class="esito attenzione">⚠️ ' + rs.conflitti.map(function (k) {
+        return esc(nomeSpostamento({ esterno: true, persona_id: k.persona_id })) + ' ha già lavoro il ' + gAnno(k.data) + ' (' + fOre(k.oreAltre) + ' su altre commesse)'
+      }).join('; ') + '. Niente viene cancellato o sovrascritto. Cosa vuoi fare?' +
+        '<label class="off-scelta"><input type="radio" name="sp-conf" value="aggiungi"> ➕ Sposta lo stesso (il lavoro di prima resta, le ore si sommano)</label>' +
+        '<label class="off-scelta"><input type="radio" name="sp-conf" value="no"> ✋ Non spostare</label></div>'
+    }
+    h += '<div id="sp-esito"></div><div class="riga-bottoni"><button type="button" class="primario grande" data-si>Sposta</button><button type="button" class="grande" data-no>Annulla</button></div>'
+    w.corpo.innerHTML = h
+    w.corpo.querySelector('[data-si]').addEventListener('click', function () {
+      if (rs.conflitti.length) {
+        var sc = w.corpo.querySelector('[name="sp-conf"]:checked')
+        if (!sc) { w.corpo.querySelector('#sp-esito').innerHTML = '<div class="esito ko">Un Esterno ha già lavoro in quei giorni: scegli sopra «Sposta lo stesso» o «Non spostare».</div>'; return }
+        if (sc.value === 'no') { w.chiudi(); return }
+      }
+      fatto = true; w.chiudi(); risolvi(true)
+    })
+    w.corpo.querySelector('[data-no]').addEventListener('click', function () { w.chiudi() })
+  })
+}
 function mostraErrore(msg) {
   var w = apriFinestra('Attenzione', { centro: true, piccola: true })
   w.corpo.innerHTML = '<div class="esito ko">' + esc(msg).replace(/\n/g, '<br>') + '</div><div class="riga-bottoni"><button type="button" class="primario">OK</button></div>'
@@ -496,8 +539,9 @@ async function lasciaSu(t, td) {
     var n = deltaLavorativi(t.data, data)
     if (!n) return
     var c = ST.perId[t.commessa_id]
-    if (!await conferma('Spostare <strong>' + esc(c.numero + ' ' + c.nome) + '</strong> di <strong>' + n + '</strong> giorni lavorativi? Si saltano weekend, festivi e chiusure.')) return
-    await applicaPiano(c.id, C.pianoSposta(ST.assPer[c.id] || [], n, ST.cal), 'Spostata di ' + n + ' giorni lavorativi', { spostamento: true })
+    var assD = ST.assPer[c.id] || [], nuoveD = C.pianoSposta(assD, n, ST.cal)
+    if (!await confermaSpostamento(c, assD, nuoveD, 'Spostare <strong>' + esc(c.numero + ' ' + c.nome) + '</strong> di <strong>' + n + '</strong> giorni lavorativi? Si saltano weekend, festivi e chiusure.')) return
+    await applicaPiano(c.id, nuoveD, 'Spostata di ' + n + ' giorni lavorativi', { spostamento: true })
   } else if (t.tipo === 'ass') {
     var a = ST.dati.assegnazioni.find(function (x) { return x.id === t.ass })
     if (!a || !td.dataset.persona) return
@@ -1480,8 +1524,9 @@ function collegaPianificazione(w, c) {
       if (!n) { toast('Scrivi un numero di giorni diverso da 0', true); return }
       var ass = ST.assPer[c.id] || []
       if (!ass.length) { toast('Nessuna assegnazione da spostare', true); return }
-      if (!await conferma('Spostare ' + esc(c.numero) + ' di ' + n + ' giorni lavorativi (' + ass.length + ' assegnazioni)? Si saltano weekend, festivi e chiusure.')) return
-      await applicaPiano(c.id, C.pianoSposta(ass, n, ST.cal), 'Spostata di ' + n + ' giorni lavorativi', { spostamento: true })
+      var nuoveS = C.pianoSposta(ass, n, ST.cal)
+      if (!await confermaSpostamento(c, ass, nuoveS, 'Spostare <strong>' + esc(c.numero) + '</strong> di ' + n + ' giorni lavorativi (' + ass.length + ' assegnazioni)? Si saltano weekend, festivi e chiusure.')) return
+      await applicaPiano(c.id, nuoveS, 'Spostata di ' + n + ' giorni lavorativi', { spostamento: true })
       riapriScheda(w)
     })
   })
@@ -1857,8 +1902,9 @@ async function azioneAvviso(a, z) {
   } else if (a.tipo === 6) {
     var ch = a.chiusura
     if (z.id === 'sposta_dopo') {
-      if (!await conferma('Spostare tutta ' + esc(c.numero) + ' dopo la chiusura (dal ' + gAnno(C.spostaLavorativi(ST.cal, C.aggiungiGiorni(ch.al, 1), 0)) + ')?')) return
-      await applicaPiano(c.id, C.pianoSpostaDopoChiusura(ass, ch, ST.cal), c.numero + ' spostata dopo la chiusura', { spostamento: true })
+      var nuoveC = C.pianoSpostaDopoChiusura(ass, ch, ST.cal)
+      if (!await confermaSpostamento(c, ass, nuoveC, 'Spostare tutta <strong>' + esc(c.numero) + '</strong> dopo la chiusura (dal ' + gAnno(C.spostaLavorativi(ST.cal, C.aggiungiGiorni(ch.al, 1), 0)) + ')?')) return
+      await applicaPiano(c.id, nuoveC, c.numero + ' spostata dopo la chiusura', { spostamento: true })
     } else if (z.id === 'interrompi') {
       // v8: le righe degli Esterni restano dove sono (non hanno le nostre chiusure)
       if (!await conferma('Interrompere ' + esc(c.numero) + ' durante la chiusura e riprendere subito dopo? Quel che sta prima resta com\'è.')) return
@@ -1929,8 +1975,9 @@ async function anticipaSuccessiva(s, primoGiorno) {
   if (!inizio || inizio <= primoGiorno) { toast(s.numero + ' comincia già ' + (inizio ? C.fmtGiorno(inizio) : '—') + ': niente da anticipare', true); return }
   var n = -C.giorniLavorativiFra(ST.cal, primoGiorno, C.aggiungiGiorni(inizio, -1))
   if (!n) { toast('Niente da anticipare', true); return }
-  if (!await conferma('Anticipare ' + esc(s.numero + ' ' + s.nome) + ' di ' + (-n) + ' giorni lavorativi (inizio ' + gAnno(primoGiorno) + ')?')) return
-  await applicaPiano(s.id, C.pianoSposta(ass, n, ST.cal), s.numero + ' anticipata di ' + (-n) + ' giorni lavorativi', { spostamento: true })
+  var nuoveA = C.pianoSposta(ass, n, ST.cal)
+  if (!await confermaSpostamento(s, ass, nuoveA, 'Anticipare <strong>' + esc(s.numero + ' ' + s.nome) + '</strong> di ' + (-n) + ' giorni lavorativi (inizio ' + gAnno(primoGiorno) + ')?')) return
+  await applicaPiano(s.id, nuoveA, s.numero + ' anticipata di ' + (-n) + ' giorni lavorativi', { spostamento: true })
 }
 function scegliPersone(titolo, nota) {
   return new Promise(function (risolvi) {

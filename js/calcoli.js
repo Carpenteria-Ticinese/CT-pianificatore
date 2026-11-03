@@ -533,6 +533,41 @@
     if (primo >= obiettivo) return assCommessa.map(function (a) { return copia(a) })
     return rimappa(assCommessa, obiettivo, cal)
   }
+  // v9 · riepilogo di uno spostamento di tutta la commessa (squadra ED Esterni si muovono insieme, stesso scarto:
+  // l'ordine fra le fasi non cambia, nessun riconoscimento per nome). prima[i] e dopo[i] sono la stessa riga.
+  // p: { prima, dopo, esterni (insiemeEsterni), assTutte (tutte le assegnazioni), commessaId }
+  // → { persone:[{chiave, persona_id, esterno, dalPrima, alPrima, dalDopo, alDopo, righe, ore}],
+  //     conflitti:[{persona_id, data, oreAltre, oreQui}] } : conflitti = giorni in cui un ESTERNO, dopo lo
+  //     spostamento, ha già lavoro su altre commesse (niente si sovrascrive: lo dice la finestra).
+  function riepilogoSpostamento(p) {
+    var prima = p.prima || [], dopo = p.dopo || [], es = p.esterni || {}
+    var per = {}, ordine = [], altre = {}, qui = {}, conf = []
+    ;(p.assTutte || []).forEach(function (a) {
+      if (!a.persona_id || !es[a.persona_id] || a.commessa_id === p.commessaId) return
+      var k = a.persona_id + '|' + a.data
+      altre[k] = (altre[k] || 0) + Number(a.ore || 0)
+    })
+    prima.forEach(function (a, i) {
+      var d = dopo[i]
+      if (!d) return
+      var k = chiavePersona(a), x = per[k]
+      if (!x) {
+        x = per[k] = { chiave: k, persona_id: a.persona_id || null, esterno: !!(a.persona_id && es[a.persona_id]), dalPrima: a.data, alPrima: a.data, dalDopo: d.data, alDopo: d.data, righe: 0, ore: 0 }
+        ordine.push(k)
+      }
+      x.righe++; x.ore += Number(a.ore || 0)
+      if (a.data < x.dalPrima) x.dalPrima = a.data
+      if (a.data > x.alPrima) x.alPrima = a.data
+      if (d.data < x.dalDopo) x.dalDopo = d.data
+      if (d.data > x.alDopo) x.alDopo = d.data
+      if (x.esterno) { var kk = a.persona_id + '|' + d.data; qui[kk] = (qui[kk] || 0) + Number(a.ore || 0) }
+    })
+    Object.keys(qui).forEach(function (kk) {
+      if (altre[kk] > 0) { var q = kk.split('|'); conf.push({ persona_id: q[0], data: q[1], oreAltre: Math.round(altre[kk] * 1000) / 1000, oreQui: Math.round(qui[kk] * 1000) / 1000 }) }
+    })
+    conf.sort(function (a, b) { return a.data < b.data ? -1 : a.data > b.data ? 1 : 0 })
+    return { persone: ordine.map(function (k) { per[k].ore = Math.round(per[k].ore * 1000) / 1000; return per[k] }), conflitti: conf }
+  }
   // Avviso 6, scelta 2: quel che sta prima resta; i giorni dentro la chiusura
   // vanno subito dopo, e tutto quello che segue scala degli stessi giorni.
   function pianoInterrompi(assCommessa, chiusura, cal) {
@@ -1411,7 +1446,7 @@
     marginePioggia: marginePioggia, margineMalattia: margineMalattia, malattiaMese: malattiaMese,
     giorniLavorativiMese: giorniLavorativiMese, squadraMalattia: squadraMalattia,
     // piani
-    rimappa: rimappa, pianoSposta: pianoSposta, pianoSpostaDopoChiusura: pianoSpostaDopoChiusura, pianoInterrompi: pianoInterrompi,
+    rimappa: rimappa, pianoSposta: pianoSposta, pianoSpostaDopoChiusura: pianoSpostaDopoChiusura, riepilogoSpostamento: riepilogoSpostamento, pianoInterrompi: pianoInterrompi,
     pianoLavoraDurante: pianoLavoraDurante, pianoFinitoIl: pianoFinitoIl,
     chiusureNelPeriodo: chiusureNelPeriodo, riempiConChiusura: riempiConChiusura, cambiaPeriodo: cambiaPeriodo, pianoRicalcola: pianoRicalcola,
     eliminazioneCommessa: eliminazioneCommessa, capitoloRiparazione: capitoloRiparazione, opzioniPocheOre: opzioniPocheOre,
