@@ -61,6 +61,8 @@ function nomeAss(a) { return nomeChiave(C.chiavePersona(a)) }
 
 // ── Finestre (pannelli e conferme) ──────────────────────────────────────────
 // ESC chiude la finestra in cima. Clic fuori NON chiude: solo ✕, Chiudi, Annulla, ESC.
+// v10: ogni finestra è un passo nella cronologia del browser (tasto Indietro: vedi «Cronologia» più sotto).
+// opz.proteggi: la finestra ricorda se è stata toccata (w.sporca) e chiude solo dopo conferma (✕, ESC, Indietro).
 var _finestre = []
 function apriFinestra(titolo, opz) {
   opz = opz || {}
@@ -70,22 +72,122 @@ function apriFinestra(titolo, opz) {
     '<div class="testata-finestra"><h2>' + esc(titolo) + '</h2><button type="button" class="chiudi">✕ Chiudi</button></div>' +
     '<div class="corpo"></div></div>'
   document.body.appendChild(sf)
-  var w = { el: sf, corpo: sf.querySelector('.corpo'), opz: opz }
+  var w = { el: sf, corpo: sf.querySelector('.corpo'), opz: opz, sporca: false }
   w.chiudi = function () { chiudiFinestra(w) }
-  sf.querySelector('.chiudi').addEventListener('click', w.chiudi)
+  sf.querySelector('.chiudi').addEventListener('click', function () { richiediChiusura(w) })
+  if (opz.proteggi) sf.addEventListener('input', function () { w.sporca = true })
   _finestre.push(w)
+  w.passo = hPush()
   return w
 }
-function chiudiFinestra(w) {
+// daStoria = true: il browser ha già tolto il passo dalla cronologia (tasto Indietro), non lo si toglie due volte
+function chiudiFinestra(w, daStoria) {
   var i = _finestre.indexOf(w)
   if (i < 0) return
   _finestre.splice(i, 1)
   w.el.remove()
+  if (!daStoria && w.passo) hIndietro(w.passo)
   if (w.opz.onChiudi) w.opz.onChiudi()
 }
+// ✕, «Chiudi» ed ESC: se nella finestra c'è qualcosa non salvato, prima si chiede
+async function richiediChiusura(w) {
+  if (_finestre.indexOf(w) < 0) return
+  if (w.sporca && !await conferma(TESTO_NON_SALVATO, { titolo: 'Modifiche non salvate', si: 'Chiudi senza salvare', pericolo: true })) return
+  chiudiFinestra(w)
+}
+var TESTO_NON_SALVATO = 'In questa finestra ci sono <strong>modifiche non salvate</strong>. Se chiudi, si perdono.<br>Chiudere lo stesso?'
 document.addEventListener('keydown', function (e) {
-  if (e.key === 'Escape' && _finestre.length) { e.preventDefault(); chiudiFinestra(_finestre[_finestre.length - 1]) }
+  if (e.key === 'Escape' && _finestre.length) { e.preventDefault(); richiediChiusura(_finestre[_finestre.length - 1]) }
 })
+
+// ── Cronologia: il tasto Indietro (mouse, tastiera, telefono) ────────────────
+// Prima «Indietro» faceva uscire dal Calendario. Ora ogni schermata (vista Cantieri / Persone, Impostazioni)
+// e ogni finestra (scheda commessa, pannelli, conferme) è un passo nella cronologia del browser:
+// Indietro chiude la finestra in cima, oppure torna alla schermata di prima. Dalla prima schermata può uscire.
+// Modello: Contabilità (pushState / popstate). Zoom e periodo non sono passi (cambiano solo la griglia).
+// Se la finestra o Impostazioni hanno modifiche non salvate, Indietro chiede prima di perderle.
+// Le operazioni sulla cronologia vanno in fila (H.coda): history.back() è asincrono e un push fatto subito
+// dopo lo rovinerebbe.
+var H = { attiva: false, coda: [], occupata: false, timer: null, impSporche: false }
+function hStato() { return { cal: 1, pag: ST.pagina, vista: ST.vista, liv: _finestre.length } }
+function hUrl(s) { return '#' + (s.pag === 'impostazioni' ? 'impostazioni' : s.vista) }
+function hPush() {                       // aggiunge un passo con la situazione di adesso
+  if (!H.attiva) return null
+  var op = { t: 'push', s: hStato(), ok: false }
+  H.coda.push(op); hAvanti()
+  return op
+}
+function hIndietro(di) {                 // toglie il passo `di` (solo se era stato davvero aggiunto)
+  if (!H.attiva) return
+  H.coda.push({ t: 'back', di: di || null }); hAvanti()
+}
+function hAvanti() {
+  while (!H.occupata && H.coda.length) {
+    var op = H.coda.shift()
+    if (op.t === 'push') {
+      try { history.pushState(op.s, '', hUrl(op.s)); op.ok = true } catch (e) { /* senza cronologia si naviga lo stesso */ }
+    } else if (!op.di || op.di.ok) {
+      H.occupata = true
+      clearTimeout(H.timer)
+      H.timer = setTimeout(function () { H.occupata = false; hAvanti() }, 800)   // se il browser non risponde, si riparte
+      try { history.back() } catch (e) { H.occupata = false }
+    }
+  }
+}
+// Primo passo all'ingresso nell'app: non aggiunge niente (Indietro da qui può uscire), segna dove siamo.
+function hInizio() {
+  H.attiva = true; H.coda = []; H.occupata = false
+  var h = String(window.location.hash || '').replace('#', '')
+  if (h === 'impostazioni') ST.pagina = 'impostazioni'
+  else if (h === 'persone' || h === 'cantieri') { ST.pagina = 'piano'; ST.vista = h }
+  else ST.pagina = 'piano'
+  try { history.replaceState(hStato(), '', hUrl(hStato())) } catch (e) { /* niente cronologia */ }
+}
+// Cambia schermata e ricorda il passo. Zoom e periodo non contano: si passa di qui solo se cambia pagina o vista.
+function naviga(pag, vista) {
+  var cambia = pag !== ST.pagina || (pag === 'piano' && vista && vista !== ST.vista)
+  ST.pagina = pag
+  if (vista) ST.vista = vista
+  if (cambia) hPush()
+  disegna()
+}
+// I tasti della barra: se Impostazioni ha scritture non salvate, prima si chiede
+function conControlloImpostazioni(fn) {
+  if (ST.pagina === 'impostazioni' && H.impSporche) {
+    conferma('In Impostazioni ci sono <strong>modifiche non salvate</strong>. Se esci da qui, si perdono.<br>Uscire lo stesso?', { titolo: 'Modifiche non salvate', si: 'Esci senza salvare', pericolo: true })
+      .then(function (ok) { if (ok) fn() })
+  } else fn()
+}
+async function hTorna(s) {
+  s = (s && s.cal) ? s : { pag: 'piano', vista: ST.vista, liv: 0 }
+  // Avanti verso una finestra che non esiste più: non si riapre, si torna dov'eravamo
+  if (s.liv > _finestre.length) { hIndietro(null); return }
+  // Finestre in più: si chiudono dall'alto, una alla volta
+  while (_finestre.length > s.liv) {
+    var top = _finestre[_finestre.length - 1]
+    if (top.sporca) {
+      hPush()                                    // il browser è tornato indietro, la finestra no: si rimette il suo passo
+      if (!await conferma(TESTO_NON_SALVATO, { titolo: 'Modifiche non salvate', si: 'Chiudi senza salvare', pericolo: true })) return
+      if (_finestre.indexOf(top) >= 0) chiudiFinestra(top)          // toglie anche il passo rimesso
+    } else chiudiFinestra(top, true)
+  }
+  if (s.pag !== ST.pagina || s.vista !== ST.vista) {
+    if (ST.pagina === 'impostazioni' && H.impSporche) {
+      var rimesso = hPush()
+      if (!await conferma('In Impostazioni ci sono <strong>modifiche non salvate</strong>. Se torni indietro, si perdono.<br>Tornare indietro lo stesso?', { titolo: 'Modifiche non salvate', si: 'Torna senza salvare', pericolo: true })) return
+      hIndietro(rimesso)
+    }
+    ST.pagina = s.pag; ST.vista = s.vista
+    disegna()
+  }
+}
+function hCollega() {
+  window.addEventListener('popstate', function (ev) {
+    if (H.occupata) { H.occupata = false; clearTimeout(H.timer); hAvanti(); return }     // è il nostro history.back()
+    if (!H.attiva || !ST.dati) return
+    esegui(function () { return hTorna(ev.state) })
+  })
+}
 function conferma(testoHtml, opz) {
   opz = opz || {}
   return new Promise(function (risolvi) {
@@ -161,7 +263,8 @@ function mostraSolo(id) {
   ;['schermo-login', 'schermo-blocco', 'app'].forEach(function (x) { $(x).hidden = x !== id })
 }
 function mostraLogin(msg) {
-  while (_finestre.length) chiudiFinestra(_finestre[_finestre.length - 1])
+  while (_finestre.length) chiudiFinestra(_finestre[_finestre.length - 1], true)
+  H.attiva = false; H.coda = []
   ST.dati = null
   mostraSolo('schermo-login')
   var m = $('login-messaggio')
@@ -170,6 +273,7 @@ function mostraLogin(msg) {
   $('login-email').focus()
 }
 function mostraBlocco(titolo, testo) {
+  H.attiva = false; H.coda = []
   ST.dati = null
   mostraSolo('schermo-blocco')
   $('blocco-titolo').textContent = titolo
@@ -186,6 +290,7 @@ async function entraNellApp() {
     ST.profilo = acc.profilo
     ST.email = acc.email
     await ricaricaTutto()
+    hInizio()                 // v10: prima schermata = primo passo della cronologia (anche da #persone / #impostazioni)
     mostraSolo('app')
     disegna()
   } catch (e) {
@@ -743,7 +848,7 @@ function apriAssegna(p) {
 function apriCommessa(id) {
   var c = ST.perId[id]
   if (!c) { mostraErrore('Commessa non trovata nel piano. Ricarica la pagina.'); return null }
-  var w = apriFinestra(c.numero + ' · ' + c.nome, { centro: true })
+  var w = apriFinestra(c.numero + ' · ' + c.nome, { centro: true, proteggi: true })
   w.commessaId = c.id
   disegnaScheda(w, c)
   return w
@@ -860,6 +965,7 @@ function disegnaScheda(w, c) {
 
   h += sezioneCapitoli(c) + sezioneRiepilogo(c) + sezionePianificazione(c) + sezioneMargini(c)
   w.corpo.innerHTML = h
+  w.sporca = false          // v10: appena disegnata = niente da perdere
   collegaScheda(w, c)
 }
 // Numero, nome, indirizzo e stato: da Anagrafiche, SOLO lettura.
@@ -920,7 +1026,7 @@ function anteprimaGiornata(w) {
 function collegaScheda(w, c) {
   var q = function (s) { return w.corpo.querySelector(s) }
   var fonte = c.viaggio_fonte || null
-  q('#sc-chiudi').addEventListener('click', w.chiudi)
+  q('#sc-chiudi').addEventListener('click', function () { richiediChiusura(w) })
   q('#sc-tipo').addEventListener('change', function () { q('#sc-ore-stimate-campo').hidden = q('#sc-tipo').value !== 'Riparazione' })
   if (q('#sc-elimina')) q('#sc-elimina').addEventListener('click', function () {
     esegui(async function () {
@@ -1877,10 +1983,8 @@ function disegnaAvvisi() {
 }
 function vaiAAvviso(a) {
   if (_finestraAvvisi) _finestraAvvisi.chiudi()
-  ST.pagina = 'piano'
-  ST.vista = a.persona_id ? 'persone' : 'cantieri'
   ST.ancora = a.data || C.oggiIso()
-  disegna()
+  naviga('piano', a.persona_id ? 'persone' : 'cantieri')
   var chiave = a.persona_id ? 'p:' + a.persona_id : a.commessa_id
   var tr = chiave && document.querySelector('tr[data-riga="' + chiave + '"]')
   if (tr) { tr.classList.add('lampeggia'); tr.scrollIntoView({ block: 'center' }); setTimeout(function () { tr.classList.remove('lampeggia') }, 2600) }
@@ -1960,7 +2064,7 @@ async function azioneAvviso(a, z) {
     else if (z.id === 'magazzino') { if (_finestraAvvisi) _finestraAvvisi.chiudi(); apriAssegna({ data: dopo, commessa_id: ST.magazzino && ST.magazzino.id }) }
     else if (z.id === 'riparazione') {
       if (_finestraAvvisi) _finestraAvvisi.chiudi()
-      ST.pagina = 'piano'; ST.vista = 'persone'; ST.ancora = dopo; disegna()
+      ST.ancora = dopo; naviga('piano', 'persone')
       $('coda').scrollIntoView({ block: 'start' })
       toast(ST.coda.length ? 'Trascina una riparazione dalla coda nella cella libera di ' + C.fmtGiorno(dopo) : 'Nessuna riparazione in coda', !ST.coda.length)
     }
@@ -1999,6 +2103,7 @@ var _annoFestivi = C.anno(C.oggiIso())
 function disegnaImpostazioni() {
   var imp = ST.dati.imp
   var el = $('pagina-impostazioni')
+  H.impSporche = false      // v10: appena disegnata = niente da perdere
   var h = '<h1>⚙️ Impostazioni</h1>'
   // Valori
   h += '<div class="sezione"><h2>Giornata, limiti e calcoli</h2><div class="campi">' +
@@ -2166,28 +2271,44 @@ function collegaImpostazioni(el) {
 
 // ── Barra comandi e avvio ───────────────────────────────────────────────────
 function collegaBarra() {
+  hCollega()
+  // Vista e Impostazioni sono passi della cronologia (Indietro); zoom e periodo no
   document.querySelectorAll('[data-vista]').forEach(function (b) {
-    b.addEventListener('click', function () { ST.vista = b.dataset.vista; ST.pagina = 'piano'; disegna() })
+    b.addEventListener('click', function () { conControlloImpostazioni(function () { naviga('piano', b.dataset.vista) }) })
   })
   document.querySelectorAll('[data-zoom]').forEach(function (b) {
-    b.addEventListener('click', function () { ST.zoom = b.dataset.zoom; ST.pagina = 'piano'; disegna() })
+    b.addEventListener('click', function () { conControlloImpostazioni(function () { ST.zoom = b.dataset.zoom; naviga('piano') }) })
   })
-  $('btn-indietro').addEventListener('click', function () { ST.ancora = C.spostaVista(ST.zoom, ST.ancora, -1); ST.pagina = 'piano'; disegna() })
-  $('btn-avanti').addEventListener('click', function () { ST.ancora = C.spostaVista(ST.zoom, ST.ancora, 1); ST.pagina = 'piano'; disegna() })
-  $('btn-oggi').addEventListener('click', function () { ST.ancora = C.oggiIso(); ST.pagina = 'piano'; disegna() })
+  $('btn-indietro').addEventListener('click', function () { conControlloImpostazioni(function () { ST.ancora = C.spostaVista(ST.zoom, ST.ancora, -1); naviga('piano') }) })
+  $('btn-avanti').addEventListener('click', function () { conControlloImpostazioni(function () { ST.ancora = C.spostaVista(ST.zoom, ST.ancora, 1); naviga('piano') }) })
+  $('btn-oggi').addEventListener('click', function () { conControlloImpostazioni(function () { ST.ancora = C.oggiIso(); naviga('piano') }) })
+  $('pagina-impostazioni').addEventListener('input', function () { H.impSporche = true })
   $('btn-pianifica').addEventListener('click', function () { esegui(apriPianifica) })
   $('btn-avvisi').addEventListener('click', apriAvvisi)
-  $('btn-impostazioni').addEventListener('click', function () { ST.pagina = 'impostazioni'; disegna() })
+  $('btn-impostazioni').addEventListener('click', function () { naviga('impostazioni') })
   $('btn-esci').addEventListener('click', function () { esegui(async function () { await D.esci(); mostraLogin('Sei uscito.') }) })
   $('blocco-esci').addEventListener('click', function () { esegui(async function () { await D.esci(); mostraLogin() }) })
   $('blocco-riprova').addEventListener('click', function () { entraNellApp() })
+  // Login: Invio (sull'email o sulla password) = tasto «Entra», una volta sola. Il form è novalidate: se manca
+  // qualcosa il messaggio è nostro (uguale per Invio e per «Entra»), niente bolla del browser.
+  var loginInCorso = false
   $('form-login').addEventListener('submit', function (e) {
     e.preventDefault()
-    var m = $('login-messaggio')
+    if (loginInCorso) return                 // doppio Invio / doppio clic: il secondo non fa niente
+    var m = $('login-messaggio'), email = $('login-email').value.trim(), pw = $('login-password').value
     m.hidden = true
-    D.entra($('login-email').value.trim(), $('login-password').value)
+    if (!email || !pw) {
+      m.hidden = false; m.textContent = 'Scrivi email e password.'
+      ;(email ? $('login-password') : $('login-email')).focus()
+      return
+    }
+    loginInCorso = true
+    var tasto = $('form-login').querySelector('button[type="submit"]')
+    tasto.disabled = true
+    D.entra(email, pw)
       .then(function () { $('login-password').value = ''; return entraNellApp() })
       .catch(function (err) { m.hidden = false; m.textContent = err.message })
+      .then(function () { loginInCorso = false; tasto.disabled = false })
   })
   // Clic nella griglia: cella → Assegna; testata → scheda commessa
   $('griglia').addEventListener('click', function (e) {
