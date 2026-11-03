@@ -588,7 +588,8 @@ function apriAssegna(p) {
       return a.commessa_id === p.commessa_id
     })
     var h = ''
-    if (!info.lavorativo) h += '<div class="esito attenzione">⚠️ Giorno non lavorativo: ' + esc(info.etichetta) + '. Puoi assegnare lo stesso: comparirà un avviso.</div>'
+    var sceltoEsterno = p.chiave && p.chiave.indexOf('p:') === 0 && ST.esterniSet[p.chiave.slice(2)]
+    if (!info.lavorativo && !(info.tipo === 'chiusura' && sceltoEsterno)) h += '<div class="esito attenzione">⚠️ Giorno non lavorativo: ' + esc(info.etichetta) + '. Puoi assegnare lo stesso: comparirà un avviso.</div>'
     h += '<h3>' + (p.chiave ? 'Già assegnato a ' + esc(nomeChiave(p.chiave)) : 'Già in ' + esc((ST.perId[p.commessa_id] || {}).numero || '')) + '</h3>'
     if (!giaQui.length) h += '<p class="aiuto">Niente, per ora.</p>'
     else h += '<ul class="lista-ass">' + giaQui.map(function (a) {
@@ -1596,8 +1597,8 @@ function apriRiempi(c, dataProposta, schedaW) {
 
 // ── v7 · «👷 Assegna a…»: le ore Esterni a un Esterno, le celle si riempiono da sole ──
 // Si sceglie l'Esterno (nome + ditta), la data d'inizio e i giorni (o le ore al giorno): proposta dalle ore
-// Esterni ancora da assegnare. Giorni: lun-ven senza festivi; le chiusure aziendali NON si saltano (gli
-// Esterni non hanno le nostre ferie): solo un avviso. Se l'Esterno ha già lavoro in quei giorni: avviso e
+// Esterni ancora da assegnare. Giorni: lun-ven senza festivi; le chiusure aziendali NON si saltano e NON si
+// avvisano (v8: gli Esterni non hanno le nostre ferie). Se l'Esterno ha già lavoro in quei giorni: avviso e
 // scelta («aggiungi lo stesso» / «salta quei giorni»), mai sovrascrivere. Prima di creare: riepilogo.
 function apriAssegnaEsterni(c, schedaW) {
   if (!conPL03()) { mostraErrore('«Assegna a…» non è ancora disponibile: manca l\'aggiornamento del database (PL_03). Niente è stato creato. Il resto del Calendario funziona.'); return }
@@ -1645,7 +1646,6 @@ function apriAssegnaEsterni(c, schedaW) {
     var h = '<p><strong>' + pe.giorni + (pe.giorni === 1 ? ' giorno' : ' giorni') + ', ' + fOre(pe.ore) + '</strong>: ' +
       pe.assegnazioni.map(function (a) { return C.fmtGiorno(a.data) + ' ' + fOre(a.ore) }).join(' · ') + '</p>'
     if (pe.festiviSaltati.length) h += '<p class="aiuto">ℹ️ Festivo saltato: ' + pe.festiviSaltati.map(function (x) { return C.fmtGiorno(x.data) + ' ' + x.nome }).join(', ') + '.</p>'
-    if (pe.inChiusura.length) h += '<div class="esito attenzione">⚠️ ' + pe.inChiusura.length + (pe.inChiusura.length === 1 ? ' giorno è' : ' giorni sono') + ' dentro la chiusura aziendale (' + pe.inChiusura.map(function (x) { return C.fmtGiorno(x.data) }).join(', ') + '). Gli Esterni non hanno le nostre ferie: i giorni restano. Solo avviso.</div>'
     if (pe.oltreFineRapporto.length) h += '<div class="esito attenzione">⚠️ Dopo la fine del rapporto (' + gAnno(esterno().data_fine_rapporto) + '): ' + pe.oltreFineRapporto.map(C.fmtGiorno).join(', ') + '.</div>'
     an.innerHTML = h
     // giorni in cui l'Esterno ha già lavoro: avviso e scelta (mai sovrascrivere)
@@ -1677,7 +1677,6 @@ function apriAssegnaEsterni(c, schedaW) {
       var testo = '<strong>' + esc(x.nome) + ' (' + esc(C.dittaDi(o, ST.dati.ditte)) + ')</strong>, ' + pe.giorni + (pe.giorni === 1 ? ' giorno' : ' giorni') + ' dal ' + gAnno(pe.dal) +
         (pe.al !== pe.dal ? ' al ' + gAnno(pe.al) : '') + ', <strong>' + fOre(pe.ore) + '</strong> su ' + esc(c.numero + ' ' + c.nome) + '.<br>' +
         pe.assegnazioni.map(function (a) { return C.fmtGiorno(a.data) + ' ' + fOre(a.ore) }).join(' · ') +
-        (pe.inChiusura.length ? '<br>⚠️ ' + pe.inChiusura.length + ' giorni dentro la chiusura aziendale (restano).' : '') +
         (stato.conflitti === 'aggiungi' && pe.occupati.length ? '<br>➕ Nei giorni già occupati si aggiunge: il lavoro di prima resta.' : '') +
         (stato.conflitti === 'salta' && pe.occupati.length ? '<br>⏭️ Saltati i giorni già occupati: ' + pe.occupati.map(function (k) { return C.fmtGiorno(k.data) }).join(', ') + '.' : '')
       if (!await conferma(testo, { si: 'Assegna', titolo: '👷 Assegna a ' + x.nome })) return
@@ -1861,8 +1860,9 @@ async function azioneAvviso(a, z) {
       if (!await conferma('Spostare tutta ' + esc(c.numero) + ' dopo la chiusura (dal ' + gAnno(C.spostaLavorativi(ST.cal, C.aggiungiGiorni(ch.al, 1), 0)) + ')?')) return
       await applicaPiano(c.id, C.pianoSpostaDopoChiusura(ass, ch, ST.cal), c.numero + ' spostata dopo la chiusura', { spostamento: true })
     } else if (z.id === 'interrompi') {
+      // v8: le righe degli Esterni restano dove sono (non hanno le nostre chiusure)
       if (!await conferma('Interrompere ' + esc(c.numero) + ' durante la chiusura e riprendere subito dopo? Quel che sta prima resta com\'è.')) return
-      await applicaPiano(c.id, C.pianoInterrompi(ass, ch, ST.cal), c.numero + ': interrotta e ripresa dopo la chiusura', { spostamento: true })
+      await applicaPiano(c.id, C.pianoInterrompi(C.senzaEsterni(ass, ST.esterniSet), ch, ST.cal).concat(C.soloEsterni(ass, ST.esterniSet)), c.numero + ': interrotta e ripresa dopo la chiusura', { spostamento: true })
     } else if (z.id === 'lavora_durante') {
       var scelte = await scegliPersone('Chi lavora durante la chiusura?', 'Le ore lavorate in chiusura avranno la nota «ferie da recuperare».')
       if (!scelte || !scelte.length) return

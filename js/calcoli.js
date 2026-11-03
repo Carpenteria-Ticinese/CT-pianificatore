@@ -964,7 +964,7 @@
 
   // ── «Assegna a…» un Esterno (v7) ──────────────────────────────────────────
   // Giorni di lavoro di un Esterno: lun-ven senza i festivi attivi. Le chiusure aziendali NON si
-  // saltano (gli Esterni non hanno le nostre ferie): si dicono solo con un avviso.
+  // saltano e non si avvisano (gli Esterni non hanno le nostre ferie, v8).
   function giornoEsterno(cal, iso) {
     if (giornoSettimana(iso) >= 6) return false
     var f = festivo(cal, iso)
@@ -980,7 +980,7 @@
   //      assTutte (tutte le assegnazioni, per i giorni già occupati), conflitti: 'aggiungi' | 'salta',
   //      fineRapporto (iso o null) }
   // Restituisce { ok, messaggio } oppure { ok: true, assegnazioni, ore, giorni, dal, al, occupati:[{data, ore}],
-  //   inChiusura:[{data, chiusura}], oltreFineRapporto:[iso], festiviSaltati:[{data, nome}] }.
+  //   oltreFineRapporto:[iso], festiviSaltati:[{data, nome}] }.
   // Niente si sovrascrive: «aggiungi» mette una riga in più nel giorno (posizione dopo le altre),
   // «salta» usa il giorno libero successivo.
   function pianoEsterno(p) {
@@ -1009,7 +1009,7 @@
       occ[a.data] = (occ[a.data] || 0) + Number(a.ore || 0)
       pos[a.data] = Math.max(pos[a.data] || 0, a.posizione || 1)
     })
-    var out = [], occupati = [], inChiusura = [], oltre = [], festiviSaltati = []
+    var out = [], occupati = [], oltre = [], festiviSaltati = []
     var d = p.dal, giri = 0
     while (out.length < quote.length && giri++ < 2000) {
       if (giornoSettimana(d) <= 5) {
@@ -1020,8 +1020,6 @@
         var gia = occ[d] || 0
         if (gia > 0) occupati.push({ data: d, ore: Math.round(gia * 1000) / 1000 })
         if (!(gia > 0 && p.conflitti === 'salta')) {
-          var ch = chiusuraDi(p.cal, d)
-          if (ch) inChiusura.push({ data: d, chiusura: ch })
           if (p.fineRapporto && d > p.fineRapporto) oltre.push(d)
           out.push({ data: d, persona_id: p.persona_id, segnaposto: null, commessa_id: p.commessa_id,
             ore: quote[out.length], posizione: (pos[d] || 0) + 1, nota: null })
@@ -1032,7 +1030,7 @@
     if (out.length < quote.length) return { ok: false, messaggio: 'Non ho trovato abbastanza giorni liberi.' }
     return {
       ok: true, assegnazioni: out, ore: sommaOre(out), giorni: out.length, dal: out[0].data, al: out[out.length - 1].data,
-      occupati: occupati, inChiusura: inChiusura, oltreFineRapporto: oltre, festiviSaltati: festiviSaltati
+      occupati: occupati, oltreFineRapporto: oltre, festiviSaltati: festiviSaltati
     }
   }
   function commessaChiusa(c) { return !!c && (c.stato === 'Finito' || STATI_CHIUSI.indexOf(c.stato_commessa) >= 0) }
@@ -1139,6 +1137,8 @@
       if (a.nota && /ferie da recuperare/i.test(a.nota)) return
       var info = infoGiorno(cal, a.data)
       if (info.lavorativo) return
+      // v8: gli Esterni non hanno le nostre chiusure aziendali: nessun avviso (weekend e festivi restano)
+      if (info.tipo === 'chiusura' && a.persona_id && S.esterni && S.esterni[a.persona_id]) return
       var k = a.commessa_id + '|' + a.data
       if (visti5[k]) return
       visti5[k] = 1
@@ -1204,7 +1204,8 @@
       // (le "ferie da recuperare" sono già una scelta fatta, non contano)
       if (!finita) {
         cal.chiusure.forEach(function (ch) {
-          var dentro = assC.filter(function (a) { return a.data >= ch.dal && a.data <= ch.al && !(a.nota && /ferie da recuperare/i.test(a.nota)) })
+          // v8: le righe degli Esterni non contano (non hanno le nostre chiusure)
+          var dentro = senzaEsterni(assC, S.esterni).filter(function (a) { return a.data >= ch.dal && a.data <= ch.al && !(a.nota && /ferie da recuperare/i.test(a.nota)) })
           if (dentro.length) {
             var gd = Array.from(new Set(dentro.map(function (a) { return a.data }))).sort()
             push(6, '6|' + c.id + '|' + ch.dal + '|' + ch.al + '|' + gd.join(','),
