@@ -32,19 +32,21 @@
  *     Una voce con minuti e CHF laboratorio ha due ore separate: i minuti nel suo tipo, il laboratorio in Laboratorio.
  *   - nome del capitolo = la scritta della riga del totale (quella che l'Excel mostra nel riepilogo).
  *
- * v7 (Umberto, 3.11.2026 — offerta Ciulla: il lattoniere esterno non si pianificava):
- *   - le voci «esterno - solo tempistica» si spuntano da sole come le altre (non le eventuali);
- *   - le loro ore vanno nel gruppo «👷 Esterni», mai nel piano della squadra (capitolo con la scritta
- *     «(esterno - solo tempistica)» nel nome: calcoli.eCapitoloEsterno); si assegnano solo a mano;
- *   - voce esterna con 0 minuti (lattoniere con costo nei terzi, nel capitolo delle altre voci esterne):
- *     avviso «Ore mancanti, scrivile tu» e campo per scriverle (impostaOreMano);
- *   - riepilogo: ore squadra / esterni / ufficio / laboratorio, separate (totaliPerTipo).
+ * v7 (Umberto, 2.11.2026 sera, offerta di un cliente — lattoniere esterno):
+ *   - le voci «esterno - solo tempistica» si spuntano da sole come le altre (non le «eventuale»)
+ *   - le loro ore diventano capitoli ESTERNI (pl_capitoli.esterno = true, SQL PL_03), uno per capitolo
+ *     dell'offerta, nome «Esterni — <capitolo>»: gruppo «👷 Esterni», mai nel piano della squadra
+ *   - voce esterna con 0 minuti (o vuoti) = cella del costo cantiere VUOTA (senza formula: nel modello
+ *     dell'offerta la formula c'è su ogni riga, anche vuota, e nelle voci del lattoniere è tolta) e prezzo
+ *     H > 0: «ore mancanti, scrivile tu». Le ore scritte a mano (oreMano = { idVoce: ore }) entrano nel totale esterni.
+ *   - riepilogo con 4 totali separati: squadra (Cantiere) / esterni / ufficio / laboratorio
  */
 (function (root) {
   'use strict'
 
   var MAX_BYTE = 20 * 1024 * 1024          // un'offerta vera pesa 0.5–3 MB
   var SCRITTA_ESTERNO = 'esterno - solo tempistica'
+  var PREFISSO_ESTERNI = 'Esterni — '      // v7: nome del capitolo esterno = PREFISSO + nome del capitolo dell'offerta
   var ESTENSIONI = /\.(xlsx|xlsm|xls)$/i
 
   function arrot2(x) { return Math.round(x * 100) / 100 }
@@ -58,6 +60,47 @@
   }
   // Esterno: minuti > 0 ma costo cantiere vuoto o 0 (il lettore mette costoCantiereFisso = 0 in quel caso)
   function eEsterna(v) { return numero(v.minuti) && v.minuti > 0 && v.costoCantiereFisso === 0 }
+  // v7: voce esterna SENZA minuti (0 o vuoti): cella del costo cantiere vuota (niente formula, niente valore;
+  // uno 0 scritto a mano non vale: nelle 5 offerte di prova lo hanno ponteggi, permessi e materiale a regia)
+  // e prezzo H > 0. Le ore non ci sono: le scrive Umberto (avviso «ore mancanti, scrivile tu»).
+  function cellaVuota(ws, ref) {
+    var x = ws && ws[ref]
+    return !x || (!x.f && (x.v == null || (typeof x.v === 'string' && !pulisci(x.v))))
+  }
+  function eEsternaSenzaMinuti(ws, colCantiere, v) {
+    if (!ws || !colCantiere) return false
+    if (numero(v.minuti) && v.minuti > 0) return false
+    if (!cellaVuota(ws, colCantiere + v.riga)) return false
+    var h = ws['H' + v.riga]
+    return !!h && numero(h.v) && h.v > 0
+  }
+  // v7 (correzione 3.11.2026, offerta di un cliente): voce esterna SENZA minuti anche quando il lavoro è pagato
+  // come COSTO TERZI. Regola (tutte insieme, solo numeri e formule, mai il testo):
+  //   costo terzi (colonna «COSTO TERZI») > 0 · minuti vuoti o 0 · costo cantiere vuoto o 0 (scritto o da formula)
+  //   · CHF laboratorio vuoto o 0 · voce NON «a corpo» (F non arrotonda H, unità non «a corpo»)
+  //   · F non «-----» (voce inclusa nel prezzo di un'altra).
+  // Le voci «a corpo» con costo terzi (installazione, ponteggi, WC, container, permessi, coordinamento,
+  // innalzamento) sono servizi e noleggi: restano come sono (0 h, non esterne). Il materiale (M) non conta:
+  // una ditta che posa materiale nostro lavora lo stesso per noi.
+  function eEsternaTerzi(ws, imp, v, aCorpo) {
+    var col = imp && imp.colonne
+    if (!ws || !col || !col.terzi || aCorpo) return false
+    if (numero(v.minuti) && v.minuti > 0) return false
+    if (v.regolaF && v.regolaF.tipo === 'incluso') return false
+    var val = function (c) { var x = c && ws[c + v.riga]; return x ? x.v : undefined }
+    var n = val(col.terzi)
+    if (!numero(n) || !(n > 0)) return false
+    var p = val(col.cantiere)
+    if (numero(p) && p > 0) return false
+    var lab = val(col.lab)
+    if (numero(lab) && lab > 0) return false
+    return true
+  }
+  // Ore di una voce con le ore scritte a mano (solo per le voci esterne senza minuti)
+  function oreCon(v, oreMano) {
+    if (v.oreMancanti && oreMano && numero(oreMano[v.id]) && oreMano[v.id] > 0) return oreMano[v.id]
+    return v.ore
+  }
 
   // Nome del capitolo: la scritta della riga del totale (B), cioè quella che l'Excel riporta nel riepilogo.
   // Il lettore prende la B della prima riga sommata: nell'offerta 2 di prova la somma parte dalla prima voce
@@ -162,13 +205,15 @@
     var ignorate = new Set()
     var extra = righeNonLette(XLSX, ws, imp, null).filter(function (e) { if (dopo(e.riga)) { ignorate.add(e.riga); return false } return true })
     var oraLab = costoOraLab(ws, imp)
+    var colCant = imp.colonne && imp.colonne.cantiere
     var labSenzaCosto = 0
     function voceDa(v, capId) {
       var corpo = aCorpoDi(ws, v)
       var qVuota = quantitaVuota(v)
       // ore dai minuti: a corpo = minuti / 60; altrimenti D × minuti / 60
       var ore = corpo ? (numero(v.minuti) ? v.minuti / 60 : 0) : oreVoce(v)
-      var esterno = eEsterna(v)
+      var senzaMinuti = !eEsterna(v) && (eEsternaSenzaMinuti(ws, colCant, v) || eEsternaTerzi(ws, imp, v, corpo))
+      var esterno = eEsterna(v) || senzaMinuti
       // ore laboratorio dai CHF: (a corpo: 1 | D) × CHF / costo orario laboratorio
       var labChf = numero(v.lab) && v.lab > 0 ? v.lab : 0
       var oreLab = 0
@@ -178,27 +223,30 @@
         else if (corpo) oreLab = labChf / oraLab
         else if (!qVuota) oreLab = v.q * labChf / oraLab
       }
-      if (qVuota && !corpo) {
+      // il testo serve solo per l'avviso, mai per decidere (resta spuntata come le altre)
+      if (esterno && !v.eventuale && /\beventual/i.test(pulisci(v.descrizione))) avvisi.push('Nel testo c\'è «eventuale»: resta spuntata, toglila se il cliente non l\'ha presa')
+      if (senzaMinuti) avvisi.push('Voce esterna con 0 minuti: ore mancanti, scrivile tu')
+      else if (qVuota && !corpo) {
         var conUno = numero(v.minuti) && v.minuti > 0 ? arrot2(v.minuti / 60) : 0
         avvisi.push('Quantità vuota: 0 h' + (conUno ? ' (con quantità 1 sarebbero ' + conUno + ' h)' : ''))
       }
-      if (!numero(v.minuti) && !labChf) avvisi.push('Minuti vuoti: 0 h')
+      if (!numero(v.minuti) && !labChf && !senzaMinuti) avvisi.push('Minuti vuoti: 0 h')
       if (v.nonLetta) avvisi.push('Riga con prezzo scritto a mano, non letta dal Preventivatore: presa solo per le ore')
       // costi in CHF senza ore (Hundegger K3, SCM): solo informazione
       var senzaOre = COSTI_SENZA_ORE.filter(function (k) { return numero(v[k[0]]) && v[k[0]] > 0 }).map(function (k) { return k[1] })
       var x = {
         id: 'v' + v.riga, riga: v.riga, codice: v.codice == null ? '' : pulisci(v.codice),
         testo: pulisci(v.descrizione), unita: pulisci(v.unita), q: numero(v.q) ? v.q : null,
-        minuti: numero(v.minuti) ? v.minuti : null, ore: ore, esterno: esterno, aCorpo: corpo,
+        minuti: numero(v.minuti) ? v.minuti : null, ore: ore, esterno: esterno, oreMancanti: senzaMinuti, aCorpo: corpo,
         labChf: labChf || null, oreLab: oreLab,
         // codice per ricordare il tipo di ore: solo se ha lettere o cifre («---» delle sotto-voci non vale)
         codiceMemoria: codiceValido(v.codice) ? pulisci(v.codice) : '',
         eventuale: !!v.eventuale, incluso: !!(v.regolaF && v.regolaF.tipo === 'incluso' && !v.eventuale),
-        avvisi: avvisi, capId: capId, nonLetta: !!v.nonLetta, costiSenzaOre: senzaOre,
-        terzi: numero(v.terzi) ? v.terzi : null, costoCantiereFisso: numero(v.costoCantiereFisso) ? v.costoCantiereFisso : null
+        avvisi: avvisi, capId: capId, nonLetta: !!v.nonLetta, costiSenzaOre: senzaOre
       }
-      // spuntata di partenza: con ore (minuti o laboratorio), non eventuale. v7: anche le esterne (lattoniere)
-      x.sceltaIniziale = (ore > 0 || oreLab > 0) && !x.eventuale
+      // spuntata di partenza: con ore (minuti o laboratorio), non eventuale. v7: anche le esterne,
+      // e le esterne senza minuti (così le ore scritte a mano contano subito)
+      x.sceltaIniziale = (ore > 0 || oreLab > 0 || senzaMinuti) && !x.eventuale
       voci.push(x)
       return x
     }
@@ -227,71 +275,33 @@
       fuori.forEach(function (v) { capF.voci.push(voceDa(v, capF.id)) })
       capitoli.push(capF)
     }
-    // v7: voce esterna con 0 minuti = costo cantiere 0, minuti vuoti o 0, costo terzi > 0, nel capitolo che ha
-    // già voci esterne con minuti (es. lattoniere: canali di gronda con il prezzo del lattoniere nei terzi).
-    // Si sposta fra le esterne con 0 h e l'avviso: le ore le scrive Umberto (impostaOreMano).
-    capitoli.forEach(function (cap) {
-      if (!cap.voci.some(function (v) { return v.esterno })) return
-      cap.voci.forEach(function (v) {
-        if (v.esterno || v.incluso || !(v.terzi > 0) || v.costoCantiereFisso !== 0 || (v.minuti != null && v.minuti > 0)) return
-        if (!v.aCorpo && !(v.q > 0)) return
-        v.esterno = true; v.senzaMinuti = true; v.ore = 0; v.oreMano = null
-        v.avvisi.push(TESTO_ORE_MANCANTI)
-        v.sceltaIniziale = false
-      })
-    })
-    ricalcolaTotali(capitoli)
-    var col = imp.colonne || {}
-    var out = {
-      tipo: imp.tipo,
-      colonne: { quantita: 'D', minuti: col.minuti || null, cantiere: col.cantiere || null, lab: col.lab || null },
-      colonneSpostate: col.minuti !== 'Q' || col.cantiere !== 'P',
-      costoOraLab: oraLab, labSenzaCosto: labSenzaCosto,
-      fineOfferta: { riga: fine, nIgnorate: ignorate.size, righeIgnorate: Array.from(ignorate).sort(function (a, b) { return a - b }) },
-      capitoli: capitoli, voci: voci
-    }
-    totaliAnalisi(out)
-    return out
-  }
-
-  var TESTO_ORE_MANCANTI = 'Ore mancanti, scrivile tu (voce esterna senza minuti)'
-  // Totali per capitolo (dopo ogni ora scritta a mano si rifanno)
-  function ricalcolaTotali(capitoli) {
     capitoli.forEach(function (cap) {
       cap.oreInterne = cap.voci.reduce(function (s, v) { return s + (v.esterno ? 0 : v.ore) }, 0)
       cap.oreEsterne = cap.voci.reduce(function (s, v) { return s + (v.esterno ? v.ore : 0) }, 0)
       cap.oreLab = cap.voci.reduce(function (s, v) { return s + v.oreLab }, 0)
       cap.nEsterne = cap.voci.filter(function (v) { return v.esterno }).length
+      cap.nOreMancanti = cap.voci.filter(function (v) { return v.oreMancanti }).length
       cap.nInterne = cap.voci.length - cap.nEsterne
       cap.nACorpo = cap.voci.filter(function (v) { return v.aCorpo }).length
       // voci con costi K3 / SCM scritti in CHF (senza ore): solo informazione
       cap.costiSenzaOre = {}
-      cap.voci.forEach(function (v) { (v.costiSenzaOre || []).forEach(function (k) { cap.costiSenzaOre[k] = (cap.costiSenzaOre[k] || 0) + 1 }) })
+      cap.voci.forEach(function (v) { v.costiSenzaOre.forEach(function (k) { cap.costiSenzaOre[k] = (cap.costiSenzaOre[k] || 0) + 1 }) })
     })
-  }
-  function totaliAnalisi(a) {
-    a.oreInterne = a.capitoli.reduce(function (s, c) { return s + c.oreInterne }, 0)
-    a.oreEsterne = a.capitoli.reduce(function (s, c) { return s + c.oreEsterne }, 0)
-    a.oreLab = a.capitoli.reduce(function (s, c) { return s + c.oreLab }, 0)
-    a.nAvvisi = a.voci.filter(function (v) { return v.avvisi.length }).length
-    a.nEsterne = a.voci.filter(function (v) { return v.esterno }).length
-    a.nSenzaMinuti = a.voci.filter(function (v) { return v.senzaMinuti && !(v.oreMano > 0) }).length
-    return a
-  }
-  // v7: ore scritte a mano per una voce esterna senza minuti. ore > 0 → la voce vale quelle ore (e si spunta
-  // in scelte, se date); ore vuote o 0 → torna a 0 h con l'avviso. Ritorna la voce (o null).
-  function impostaOreMano(analisi, idVoce, ore, scelte) {
-    var v = analisi.voci.find(function (x) { return x.id === idVoce })
-    if (!v || !v.senzaMinuti) return null
-    var ok = numero(ore) && ore > 0
-    v.oreMano = ok ? arrot2(ore) : null
-    v.ore = ok ? v.oreMano : 0
-    v.avvisi = v.avvisi.filter(function (a) { return a !== TESTO_ORE_MANCANTI })
-    if (!ok) v.avvisi.push(TESTO_ORE_MANCANTI)
-    if (scelte) scelte[v.id] = ok && !v.eventuale
-    ricalcolaTotali(analisi.capitoli)
-    totaliAnalisi(analisi)
-    return v
+    var col = imp.colonne || {}
+    return {
+      tipo: imp.tipo,
+      colonne: { quantita: 'D', minuti: col.minuti || null, cantiere: col.cantiere || null, lab: col.lab || null },
+      colonneSpostate: col.minuti !== 'Q' || col.cantiere !== 'P',
+      costoOraLab: oraLab, labSenzaCosto: labSenzaCosto,
+      fineOfferta: { riga: fine, nIgnorate: ignorate.size, righeIgnorate: Array.from(ignorate).sort(function (a, b) { return a - b }) },
+      capitoli: capitoli, voci: voci,
+      oreInterne: capitoli.reduce(function (s, c) { return s + c.oreInterne }, 0),
+      oreEsterne: capitoli.reduce(function (s, c) { return s + c.oreEsterne }, 0),
+      oreLab: capitoli.reduce(function (s, c) { return s + c.oreLab }, 0),
+      nAvvisi: voci.filter(function (v) { return v.avvisi.length }).length,
+      nEsterne: voci.filter(function (v) { return v.esterno }).length,
+      nOreMancanti: voci.filter(function (v) { return v.oreMancanti }).length
+    }
   }
 
   // ── Tipo di ore: Cantiere (C, di base) / Ufficio (U) / Laboratorio (L); Esterno (E) per le esterne ──
@@ -303,20 +313,22 @@
     return t === 'U' || t === 'L' ? t : 'C'
   }
   // Ore di una voce divise per tipo: i minuti nel tipo scelto, il laboratorio in CHF sempre in L
-  function oreDiTipo(v, tipi) {
+  // v7: oreMano = ore scritte a mano per le voci esterne senza minuti
+  function oreDiTipo(v, tipi, oreMano) {
     var o = { C: 0, U: 0, L: 0, E: 0 }
-    o[tipoMinuti(v, tipi)] += v.ore
+    o[tipoMinuti(v, tipi)] += oreCon(v, oreMano)
     o.L += v.oreLab
     return o
   }
   // Totali per tipo, per capitolo e in tutto. Con «scelte» contano solo le voci spuntate.
-  function totaliPerTipo(analisi, tipi, scelte) {
+  // v7: C = ore squadra, E = ore esterni, U = ufficio, L = laboratorio (il riepilogo dell'importazione)
+  function totaliPerTipo(analisi, tipi, scelte, oreMano) {
     var tot = { C: 0, U: 0, L: 0, E: 0 }, perCap = {}
     analisi.capitoli.forEach(function (cap) {
       var t = { C: 0, U: 0, L: 0, E: 0 }
       cap.voci.forEach(function (v) {
         if (scelte && !scelte[v.id]) return
-        var o = oreDiTipo(v, tipi)
+        var o = oreDiTipo(v, tipi, oreMano)
         for (var k in o) { t[k] += o[k]; tot[k] += o[k] }
       })
       perCap[cap.id] = t
@@ -339,11 +351,13 @@
   // scelte: oggetto { idVoce: true/false }. Capitoli interni prima, poi quelli esterni.
   // v5: dei minuti interni contano SOLO quelli di tipo Cantiere (tipi: { idVoce: 'U'|'L' }); Ufficio e
   // Laboratorio (e le ore laboratorio in CHF) non creano capitoli.
-  function proponiCapitoli(analisi, scelte, tipi) {
+  // v7: i capitoli esterni si chiamano «Esterni — <capitolo>» e hanno esterno = true (gruppo 👷 Esterni);
+  // oreMano = ore scritte a mano per le voci esterne senza minuti. totale = squadra, totaleEsterni = esterni.
+  function proponiCapitoli(analisi, scelte, tipi, oreMano) {
     var nuovi = [], saltati = []
     function conta(v, esterno) { return v.esterno === esterno && !!scelte[v.id] && (esterno || tipoMinuti(v, tipi) === 'C') }
     function somma(cap, esterno) {
-      return cap.voci.reduce(function (s, v) { return s + (conta(v, esterno) ? v.ore : 0) }, 0)
+      return cap.voci.reduce(function (s, v) { return s + (conta(v, esterno) ? oreCon(v, oreMano) : 0) }, 0)
     }
     function aggiungi(nome, ore, esterno, nVoci) {
       var o = arrot2(ore)
@@ -355,12 +369,19 @@
       if (n) aggiungi(cap.titolo, somma(cap, false), false, n)
     })
     analisi.capitoli.forEach(function (cap) {
-      var n = cap.voci.filter(function (v) { return conta(v, true) && v.ore > 0 }).length
-      if (n) aggiungi(cap.titolo + ' (' + SCRITTA_ESTERNO + ')', somma(cap, true), true, n)
+      var n = cap.voci.filter(function (v) { return conta(v, true) && oreCon(v, oreMano) > 0 }).length
+      if (n) aggiungi(nomeEsterni(cap.titolo), somma(cap, true), true, n)
     })
     // voci spuntate con 0 h non creano niente: le dice l'anteprima
-    var totale = arrot2(nuovi.reduce(function (s, x) { return s + x.ore }, 0))
-    return { nuovi: nuovi, saltati: saltati, totale: totale }
+    var totale = arrot2(nuovi.reduce(function (s, x) { return s + (x.esterno ? 0 : x.ore) }, 0))
+    var totaleEsterni = arrot2(nuovi.reduce(function (s, x) { return s + (x.esterno ? x.ore : 0) }, 0))
+    // voci esterne spuntate, senza minuti e senza ore scritte: solo avviso (mai blocco)
+    var senzaOre = analisi.voci.filter(function (v) { return v.oreMancanti && scelte[v.id] && !(oreCon(v, oreMano) > 0) }).length
+    return { nuovi: nuovi, saltati: saltati, totale: totale, totaleEsterni: totaleEsterni, esterneSenzaOre: senzaOre }
+  }
+  function nomeEsterni(titolo) {
+    var t = PREFISSO_ESTERNI + titolo
+    return t.length > 120 ? t.slice(0, 117) + '…' : t
   }
 
   function scelteIniziali(analisi) {
@@ -405,9 +426,9 @@
   }
 
   var API = {
-    SCRITTA_ESTERNO: SCRITTA_ESTERNO, MAX_BYTE: MAX_BYTE,
-    oreVoce: oreVoce, eEsterna: eEsterna, analizza: analizza, proponiCapitoli: proponiCapitoli,
-    impostaOreMano: impostaOreMano, TESTO_ORE_MANCANTI: TESTO_ORE_MANCANTI,
+    SCRITTA_ESTERNO: SCRITTA_ESTERNO, PREFISSO_ESTERNI: PREFISSO_ESTERNI, MAX_BYTE: MAX_BYTE,
+    oreVoce: oreVoce, eEsterna: eEsterna, eEsternaSenzaMinuti: eEsternaSenzaMinuti, eEsternaTerzi: eEsternaTerzi, oreCon: oreCon, nomeEsterni: nomeEsterni,
+    analizza: analizza, proponiCapitoli: proponiCapitoli,
     fineOfferta: fineOfferta, aCorpoDi: aCorpoDi, TIPI: TIPI, tipoMinuti: tipoMinuti, oreDiTipo: oreDiTipo,
     totaliPerTipo: totaliPerTipo, tipiIniziali: tipiIniziali,
     scelteIniziali: scelteIniziali, leggiOfferta: leggiOfferta, arrot2: arrot2

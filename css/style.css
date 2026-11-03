@@ -336,11 +336,42 @@ table.gantt tr.riga-esterno td.testa { border-left: 6px solid #9a3412; }
   .etichetta-esterno { font-size: .85rem; padding: 2px 6px; }
 }
 
-/* v7 · Esterni: ore a parte (lattoniere) */
-.off-quattro { display: flex; flex-wrap: wrap; gap: 8px 14px; margin: 0 0 10px; padding: 8px 10px; border: 2px solid var(--primary); border-radius: var(--radius); background: var(--primary-lt); }
-.off-quattro span { white-space: nowrap; }
-.off-ore-mano { margin: 4px 0; }
-.off-ore-mano label { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; font-weight: 600; }
-.tab-capitoli tr.cap-esterno td { background: #fff7ed; }
-.lista-esterni { list-style: none; padding: 0; margin: 8px 0 0; }
-.lista-esterni li { padding: 4px 0; border-top: 1px solid var(--border-lt); }
+/* ── v7 · capitoli Esterni, ore scritte a mano, 4 totali, «Assegna a…» ───── */
+button.chi { min-width: 120px; font-weight: 700; white-space: nowrap; }
+button.chi.squadra { border-color: var(--primary); color: var(--primary-hi); background: var(--primary-lt); }
+button.chi.esterni { border-color: #9a3412; color: #7c2d12; background: #ffedd5; }
+.tab-capitoli tr.cap-esterni td, .tab-capitoli tr.cap-esterni th { background: #fff7ed; }
+.box-esterni { margin: 12px 0; padding: 10px 12px; border: 2px solid #9a3412; border-radius: var(--radius); background: #fff7ed; overflow-wrap: anywhere; }
+.box-esterni h4 { margin: 0 0 4px; font-size: 1.1rem; color: #7c2d12; }
+.box-esterni .riga-esterni { margin: 4px 0; font-size: 1.05rem; }
+.off-ore-mano { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 6px 0 2px 40px; padding: 8px 10px; border: 2px solid var(--warn); border-radius: var(--radius); background: var(--warn-bg); }
+.off-ore-mano label { font-weight: 700; color: var(--warn); }
+.off-ore-mano input { width: 120px; min-height: 52px; font-size: 1.25rem; font-weight: 700; text-align: right; border: 2px solid var(--warn); border-radius: var(--radius); padding: 4px 10px; background: #fff; }
+.off-ore-mano span { font-weight: 600; }
+.off-ore-mano-esito { color: var(--text2); }
+.off-totali { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 6px 0 10px; }
+.off-totale { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 2px solid var(--border); border-radius: var(--radius); background: #fff; min-width: 0; }
+.off-totale span { font-size: .9rem; color: var(--text2); font-weight: 600; }
+.off-totale strong { font-size: 1.2rem; white-space: nowrap; }
+.off-totale.squadra { border-color: var(--primary); }
+.off-totale.esterni { border-color: #9a3412; background: #fff7ed; }
+.off-riepilogo h4 { margin: 0 0 4px; font-size: 1.05rem; }
+.off-gruppo.esterni { border-color: #9a3412; background: #fff7ed; }
+.off-gruppo.esterni h4 { color: #7c2d12; }
+.off-etichetta.est { border-color: #9a3412; color: #7c2d12; background: #ffedd5; }
+.nota-esterni { margin: 8px 0; padding: 8px 10px; border: 2px solid #9a3412; border-radius: var(--radius); background: #fff7ed; }
+.nota-esterni .aiuto { margin: 0 0 8px; color: var(--text2); }
+.lista-esterni { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 10px; }
+.voce-esterno { display: flex; align-items: center; gap: 10px; min-height: 56px; padding: 6px 10px; border: 2px solid var(--border); border-radius: var(--radius); background: #fff; cursor: pointer; overflow-wrap: anywhere; }
+.voce-esterno input[type=radio] { width: 30px; height: 30px; min-height: 0; flex: none; margin: 0; accent-color: #9a3412; }
+.voce-esterno .etichetta-esterno { display: inline-block; margin: 2px 0 0; }
+.ae-modi { display: flex; flex-direction: column; gap: 8px; margin: 6px 0 10px; }
+.ae-modi .off-scelta { flex-wrap: wrap; }
+.ae-modi input[type=text], .ae-modi input:not([type]) , .ae-modi input[inputmode] { width: 90px; min-height: 48px; font-size: 1.15rem; font-weight: 700; text-align: right; }
+.ae-anteprima { margin: 8px 0; padding: 8px 10px; border: 2px solid var(--border-lt); border-radius: var(--radius); background: var(--surface); overflow-wrap: anywhere; }
+#ae-conflitti .off-scelta { margin-top: 8px; font-weight: 600; }
+@media (max-width: 600px) {
+  .off-totali { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .off-ore-mano { margin-left: 0; }
+  .tab-capitoli button.chi { min-width: 0; }
+}

@@ -10,9 +10,6 @@
    v6: ST.persone = solo Dipendenti (Riempi, assenze, ferie da recuperare,
    «senza lavoro»); ST.esterni = Esterni, nel loro gruppo con il nome della
    ditta, assegnati solo a mano (pannello Assegna, trascinare).
-   v7: le ORE degli Esterni (capitoli «(esterno - solo tempistica)», es. lattoniere)
-   stanno a parte: mai nelle ore della squadra (Riempi, Ricalcola, residuo).
-   Si assegnano a mano con «Assegna a…» nella scheda della commessa.
    ═══════════════════════════════════════════════════════════════════════════ */
 'use strict'
 var C = window.PLC, V = window.PLViaggio, D = window.PLD
@@ -210,11 +207,12 @@ function ricostruisci() {
   d.meteo.filter(function (r) { return r.stazione === d.imp.stazione_meteo }).forEach(function (r) { ST.meteoMap[r.mese] = Number(r.giorni_pioggia) })
   ST.magazzino = d.commesse.find(function (c) { return c.numero === PL_CONFIG.NUMERO_MAGAZZINO }) || d.commesse.find(function (c) { return c.interna }) || null
   ST.coda = d.commesse.filter(function (c) { return c.tipo === 'Riparazione' && c.stato === 'Confermato' && !(ST.assPer[c.id] || []).length })
-    .map(function (c) { return { id: c.id, numero: c.numero, nome: c.nome, indirizzo: c.indirizzo, colore: c.colore, oreStimate: C.sommaOre(C.capitoliSquadra(ST.capPer[c.id] || [])) } })
+    .map(function (c) { return { id: c.id, numero: c.numero, nome: c.nome, indirizzo: c.indirizzo, colore: c.colore, oreStimate: C.oreSquadra(ST.capPer[c.id] || []) } })
   ST.avvisi = C.calcolaAvvisi({
     cal: ST.cal, persone: ST.persone, nomi: ST.nomi, assenze: d.assenze, commesse: d.commesse, capitoli: d.capitoli,
     assegnazioni: d.assegnazioni, previste: d.previste, ignorati: d.ignorati, oggi: oggi,
-    meteoVuoto: !Object.keys(ST.meteoMap).length, riparazioniInCoda: ST.coda, orizzonteGiorni: 28, esterni: ST.esterniSet
+    meteoVuoto: !Object.keys(ST.meteoMap).length, riparazioniInCoda: ST.coda, orizzonteGiorni: 28,
+    esterni: ST.esterniSet          // v7: numeri della squadra senza Esterni; avviso «Ore Esterni da assegnare»
   })
 }
 // Il titolare lavora in cantiere: deve essere fra gli operai attivi. Si riconosce come
@@ -232,6 +230,7 @@ function titolariNonInOperai() {
   }).map(function (p) { return p.nome || 'titolare' })
 }
 function rie(c) {
+  // v7: squadra (capitoli non esterni, Dipendenti e segnaposto) e Esterni (r.esterni) separati
   if (!ST.rie[c.id]) ST.rie[c.id] = C.riepilogoCommessa(c, ST.capPer[c.id] || [], ST.dati.assegnazioni, ST.cal, viaggioIncluso(), ST.esterniSet)
   return ST.rie[c.id]
 }
@@ -311,7 +310,7 @@ function commesseDaMostrare(giorni) {
     if (c.tipo === 'Riparazione' && c.stato === 'Confermato' && !a.length) return false // sta nella coda
     return true
   }).sort(function (x, y) {
-    var ix = rie(x).inizio || x.data_inizio || '9999', iy = rie(y).inizio || y.data_inizio || '9999'
+    var ix = rie(x).inizioTutte || x.data_inizio || '9999', iy = rie(y).inizioTutte || y.data_inizio || '9999'
     return ix < iy ? -1 : ix > iy ? 1 : x.numero.localeCompare(y.numero)
   })
 }
@@ -325,7 +324,8 @@ function righeCantieri(giorni, oggi) {
     var margini = {}
     if (!c.interna) C.blocchiMargine(c, r.fine, ST.cal).forEach(function (b) { (margini[b.data] = margini[b.data] || []).push(b) })
     var sotto = c.interna ? 'interna' : (fOre(r.orePreventivo) + ' preventivo' +
-      (r.residue > 1e-9 ? ' · mancano ' + fOre(r.residue) : r.residue < -1e-9 ? ' · ' + fOre(-r.residue) + ' oltre' : r.fine ? ' · fine ' + C.fmtGiorno(r.fine) : ''))
+      (r.residue > 1e-9 ? ' · mancano ' + fOre(r.residue) : r.residue < -1e-9 ? ' · ' + fOre(-r.residue) + ' oltre' : r.fine ? ' · fine ' + C.fmtGiorno(r.fine) : '') +
+      (r.esterni.nCapitoli ? ' · 👷 Esterni ' + fOre(r.esterni.orePreventivo) + (r.esterni.residue > 1e-9 ? ' (mancano ' + fOre(r.esterni.residue) + ')' : '') : ''))
     h += '<tr data-riga="' + c.id + '"><td class="testa"><button type="button" class="link" data-apri-commessa="' + c.id + '">' +
       '<span class="pallino" style="background:' + col + '"></span><span class="num">' + esc(c.numero) + '</span> ' + esc(c.nome) +
       ' <span class="stato">' + esc(etichettaStato(c)) + (c.tipo === 'Riparazione' ? ' · Riparazione' : '') + '</span>' +
@@ -522,7 +522,7 @@ async function lasciaSu(t, td) {
       apriRiempi(r, data)
     } else if (td.dataset.persona && td.dataset.persona.indexOf('p:') === 0) {
       var pid = td.dataset.persona.slice(2)
-      var ore = C.sommaOre(C.capitoliSquadra(ST.capPer[r.id] || []))
+      var ore = C.oreSquadra(ST.capPer[r.id] || [])
       if (!(ore > 0)) { toast('La riparazione ' + r.numero + ' non ha ore stimate (capitoli): aprila e aggiungile.', true); return }
       if (!await conferma('Pianificare la riparazione <strong>' + esc(r.numero + ' ' + r.nome) + '</strong> (' + fOre(ore) + ') con <strong>' + esc(ST.nomi[pid]) + '</strong> da ' + gAnno(data) + '?')) return
       var piano = C.riempiAutomatico({ oreTotali: ore, dataInizio: data, persone: [{ persona_id: pid }], cal: ST.cal, commessa: r, assenze: ST.dati.assenze, viaggioIncluso: viaggioIncluso(), altreAssegnazioni: ST.dati.assegnazioni })
@@ -989,31 +989,31 @@ async function salvaPreviste(commessaId) {
 }
 
 // Capitoli
+// v7 (PL_03): ogni capitolo è della squadra (🏗️) o degli Esterni (👷). Il totale e la quota all'aperto
+// contano solo la squadra; le ore Esterni stanno a parte, con «Assegna a…».
+function conPL03() { return ST.dati.versioneDb >= 3 }
 function sezioneCapitoli(c) {
   var caps = (ST.capPer[c.id] || []).slice().sort(function (a, b) { return a.ordine - b.ordine })
-  var squadra = C.capitoliSquadra(caps), est = C.capitoliEsterni(caps)
-  var tot = C.sommaOre(squadra), totEst = C.sommaOre(est)
+  var squadra = C.capitoliSquadra(caps)
+  var tot = C.sommaOre(squadra), totE = C.oreEsterni(caps)
   var aperto = C.sommaOre(squadra.filter(function (x) { return x.ubicazione !== 'Al coperto' }))
+  var pl03 = conPL03()
   var h = '<div class="sezione"><h3>📋 Capitoli del preventivo</h3>'
   if (caps.length) {
-    h += '<table class="elenco tab-capitoli"><thead><tr><th>#</th><th>Capitolo</th><th class="num">Ore</th><th>Dove</th><th></th></tr></thead><tbody>' +
+    h += '<table class="elenco tab-capitoli"><thead><tr><th>#</th><th>Capitolo</th><th class="num">Ore</th><th>Dove</th>' + (pl03 ? '<th>Chi</th>' : '') + '<th></th></tr></thead><tbody>' +
       caps.map(function (x, i) {
         var cop = x.ubicazione === 'Al coperto'
-        // v7: capitolo degli Esterni: si cambia solo il nome, la scritta «esterno» resta (la aggiunge il programma)
-        if (C.eCapitoloEsterno(x)) {
-          return '<tr class="cap-esterno"><td>' + (i + 1) + '</td><td><input data-cap-nome="' + x.id + '" data-cap-esterno="1" value="' + esc(C.nomeSenzaEsterno(x.nome)) + '" aria-label="Nome capitolo degli Esterni">' +
-            '<span class="etichetta-esterno">👷 Esterni · solo tempistica, non nel piano della squadra</span></td>' +
-            '<td class="num"><input data-cap-ore="' + x.id + '" value="' + f(x.ore, 2) + '" inputmode="decimal" style="width:90px;text-align:right" aria-label="Ore"> h</td>' +
-            '<td>—</td><td><button type="button" class="piccolo pericolo" data-cap-togli="' + x.id + '">Togli</button></td></tr>'
-        }
-        return '<tr><td>' + (i + 1) + '</td><td><input data-cap-nome="' + x.id + '" value="' + esc(x.nome) + '" aria-label="Nome capitolo"></td>' +
+        var est = x.esterno === true
+        return '<tr' + (est ? ' class="cap-esterni"' : '') + '><td>' + (i + 1) + '</td><td><input data-cap-nome="' + x.id + '" value="' + esc(x.nome) + '" aria-label="Nome capitolo"></td>' +
           '<td class="num"><input data-cap-ore="' + x.id + '" value="' + f(x.ore, 2) + '" inputmode="decimal" style="width:90px;text-align:right" aria-label="Ore"> h</td>' +
           '<td><button type="button" class="ubicazione ' + (cop ? 'coperto' : 'aperto') + '" data-cap-ubi="' + x.id + '" aria-label="Ubicazione: ' + esc(x.ubicazione) + ', clic per cambiare">' + (cop ? '🏠 Al coperto' : '☀ All\'aperto') + '</button></td>' +
+          (pl03 ? '<td><button type="button" class="chi ' + (est ? 'esterni' : 'squadra') + '" data-cap-chi="' + x.id + '" aria-label="Di chi: ' + (est ? 'Esterni' : 'Squadra') + ', clic per cambiare">' + (est ? '👷 Esterni' : '🏗️ Squadra') + '</button></td>' : '') +
           '<td><button type="button" class="piccolo pericolo" data-cap-togli="' + x.id + '">Togli</button></td></tr>'
-      }).join('') + '</tbody><tfoot><tr><th></th><th>Totale squadra</th><th class="num">' + fOre(tot) + '</th><th colspan="2">all\'aperto ' + f(tot ? aperto / tot * 100 : 0, 0) + '%</th></tr>' +
-      (est.length ? '<tr><th></th><th>👷 Totale Esterni (a parte)</th><th class="num">' + fOre(totEst) + '</th><th colspan="2"><button type="button" class="piccolo" data-assegna-esterno>👷 Assegna a…</button></th></tr>' : '') +
+      }).join('') + '</tbody><tfoot><tr><th></th><th>Totale squadra</th><th class="num">' + fOre(tot) + '</th><th colspan="' + (pl03 ? 3 : 2) + '">all\'aperto ' + f(tot ? aperto / tot * 100 : 0, 0) + '%</th></tr>' +
+      (totE > 0 ? '<tr class="cap-esterni"><th></th><th>👷 Esterni (a parte)</th><th class="num">' + fOre(totE) + '</th><th colspan="' + (pl03 ? 3 : 2) + '">non nel piano della squadra</th></tr>' : '') +
       '</tfoot></table>'
   } else h += '<p class="aiuto">Nessun capitolo. Caricali dall\'offerta Excel qui sotto, o aggiungili uno alla volta.</p>'
+  if (!c.interna) h += boxEsterni(c)
   h += '<h3>📄 Carica offerta Excel</h3>' +
     '<p class="aiuto">Scegli il file dell\'offerta (.xlsx o .xls). Si legge solo qui, su questo computer: il file non viene caricato da nessuna parte. Ore di ogni voce = quantità × minuti ÷ 60 (voci «a corpo»: minuti ÷ 60).</p>' +
     '<input type="file" id="off-file" class="file-nascosto" accept=".xlsx,.xlsm,.xls">' +
@@ -1021,9 +1021,27 @@ function sezioneCapitoli(c) {
     '<div id="off-esito">' + (OFF[c.id] ? htmlOfferta(c, OFF[c.id]) : '') + '</div>'
   h += '<h3>Aggiungi un capitolo a mano</h3><div class="campi">' + campo('Capitolo', '<input id="cap-nuovo-nome">') +
     campo('Ore', '<input id="cap-nuovo-ore" inputmode="decimal" placeholder="12,5 o 12:30">', 'h') +
-    campo('Chi lo fa', '<select id="cap-nuovo-chi"><option value="squadra">🏗️ Squadra</option><option value="esterni">👷 Esterni (solo tempistica)</option></select>') +
-    campo('Dove', '<select id="cap-nuovo-ubi"><option>All\'aperto</option><option>Al coperto</option></select>') + '</div>' +
+    campo('Dove', '<select id="cap-nuovo-ubi"><option>All\'aperto</option><option>Al coperto</option></select>') +
+    (conPL03() ? campo('Di chi', '<select id="cap-nuovo-chi"><option value="squadra">🏗️ Squadra</option><option value="esterni">👷 Esterni (altra ditta)</option></select>') : '') + '</div>' +
     '<div class="riga-bottoni"><button type="button" id="cap-aggiungi">+ Aggiungi capitolo</button></div></div>'
+  return h
+}
+
+// v7: ore degli Esterni della commessa con «Assegna a…» (senza PL_03 dice cosa manca, niente errori tecnici)
+function boxEsterni(c) {
+  var e = rie(c).esterni
+  var h = '<div class="box-esterni" data-box-esterni="' + c.id + '"><h4>👷 Ore Esterni</h4>'
+  if (!conPL03()) h += '<p class="aiuto">Manca l\'aggiornamento del database (PL_03): le ore degli Esterni non si possono ancora tenere a parte dalla squadra.</p>'
+  else if (e.nCapitoli) {
+    h += '<p class="riga-esterni"><strong>' + fOre(e.orePreventivo) + '</strong> nei capitoli 👷 Esterni · assegnate ' + fOre(e.oreAssegnate) + ' · ' +
+      (e.residue > 1e-9 ? '<strong>mancano ' + fOre(e.residue) + '</strong>' : e.residue < -1e-9 ? '⚠️ ' + fOre(-e.residue) + ' oltre' : '✔ tutte assegnate') +
+      (e.inizio ? ' · ' + C.fmtGiorno(e.inizio) + (e.fine !== e.inizio ? ' – ' + C.fmtGiorno(e.fine) : '') : '') + '</p>'
+  } else {
+    h += '<p class="aiuto">Nessun capitolo 👷 Esterni' + (e.oreAssegnate > 0 ? ' (Esterni già assegnati: ' + fOre(e.oreAssegnate) + ')' : '') +
+      '. Si creano caricando l\'offerta (voci «' + esc(O.SCRITTA_ESTERNO) + '») o aggiungendo un capitolo con «Di chi: 👷 Esterni».</p>'
+  }
+  h += '<p class="aiuto">«Riempi» non le dà ai Dipendenti: si assegnano a un Esterno (nome e ditta) con «Assegna a…».</p>' +
+    '<div class="riga-bottoni"><button type="button" class="grande" data-assegna-esterni="' + c.id + '">👷 Assegna a…</button></div></div>'
   return h
 }
 
@@ -1035,7 +1053,7 @@ function sezioneCapitoli(c) {
 // (colonna A) in questo browser: se il browser non lo permette la pagina funziona lo stesso.
 var OFF = {}
 var CHIAVE_TIPI = 'calendario_offerta_tipi_v1'
-var ICONA_TIPO = { C: '🏗️', U: '🖥️', L: '🔧', E: '🚚' }
+var ICONA_TIPO = { C: '🏗️', U: '🖥️', L: '🔧', E: '👷' }
 function memoriaTipi() {
   try { var m = JSON.parse(localStorage.getItem(CHIAVE_TIPI) || '{}'); return m && typeof m === 'object' && !Array.isArray(m) ? m : {} } catch (e) { return {} }
 }
@@ -1047,8 +1065,16 @@ function ricordaTipo(codice, tipo) {
     localStorage.setItem(CHIAVE_TIPI, JSON.stringify(m))
   } catch (e) { /* senza memoria del browser la scelta vale solo adesso */ }
 }
+// v7: ore di una voce con le ore scritte a mano (voci esterne senza minuti)
+function oreVoceSt(st, v) { return O.oreCon(v, st.oreMano) }
+// voce «con ore» per spuntare: minuti, laboratorio, o esterna senza minuti (le ore si scrivono a mano)
+function voceConOre(v, st, esterno) {
+  if (v.esterno !== esterno) return false
+  if (esterno) return v.ore > 0 || v.oreMancanti
+  return v.ore > 0 && O.tipoMinuti(v, st.tipi) === 'C'
+}
 function oreTot(st, cap, esterno) {
-  return cap.voci.reduce(function (s, v) { return s + (v.esterno === esterno && st.scelte[v.id] && (esterno || O.tipoMinuti(v, st.tipi) === 'C') ? v.ore : 0) }, 0)
+  return cap.voci.reduce(function (s, v) { return s + (v.esterno === esterno && st.scelte[v.id] && (esterno || O.tipoMinuti(v, st.tipi) === 'C') ? oreVoceSt(st, v) : 0) }, 0)
 }
 function htmlTipoVoce(st, v) {
   if (v.esterno || !(v.ore > 0)) return ''
@@ -1058,28 +1084,34 @@ function htmlTipoVoce(st, v) {
       return '<button type="button" class="off-tipo-btn' + (t === k ? ' attivo' : '') + '" data-off-tipo="' + k + '" data-off-voce-tipo="' + v.id + '" aria-pressed="' + (t === k) + '">' + ICONA_TIPO[k] + ' ' + O.TIPI[k] + '</button>'
     }).join('') + '</div>'
 }
+// v7: voce esterna con 0 minuti → avviso e campo grande per scrivere le ore (avviso, mai blocco)
+function htmlOreMano(st, v) {
+  if (!v.oreMancanti) return ''
+  var val = st.oreMano[v.id] > 0 ? f(st.oreMano[v.id], 2) : ''
+  return '<div class="off-ore-mano"><label for="om-' + v.id + '">✍️ Ore (scrivile tu)</label>' +
+    '<input id="om-' + v.id + '" data-off-oremano="' + v.id + '" inputmode="decimal" value="' + esc(val) + '" placeholder="es. 6,5" aria-label="Ore della riga ' + v.riga + ', scritte a mano"> <span>h</span>' +
+    '<span class="off-ore-mano-esito" data-off-oremano-esito="' + v.id + '"></span></div>'
+}
 function htmlVoceOfferta(st, v) {
-  var conOre = v.ore > 0 || v.oreLab > 0
-  var calc = v.aCorpo
-    ? 'a corpo: ' + (v.minuti === null ? '—' : f(v.minuti, 1)) + ' min ÷ 60 = <strong>' + fOre(v.ore) + '</strong>'
-    : (v.q === null ? '—' : f(v.q, 2)) + ' ' + esc(v.unita || '') + ' × ' + (v.minuti === null ? '—' : f(v.minuti, 1)) + ' min ÷ 60 = <strong>' + fOre(v.ore) + '</strong>'
+  var conOre = v.ore > 0 || v.oreLab > 0 || v.oreMancanti
+  var calc = v.oreMancanti
+    ? (v.q === null ? '—' : f(v.q, 2)) + ' ' + esc(v.unita || '') + ' × ' + (v.minuti === null ? '—' : f(v.minuti, 1)) + ' min: <strong>ore mancanti</strong>'
+    : v.aCorpo
+      ? 'a corpo: ' + (v.minuti === null ? '—' : f(v.minuti, 1)) + ' min ÷ 60 = <strong>' + fOre(v.ore) + '</strong>'
+      : (v.q === null ? '—' : f(v.q, 2)) + ' ' + esc(v.unita || '') + ' × ' + (v.minuti === null ? '—' : f(v.minuti, 1)) + ' min ÷ 60 = <strong>' + fOre(v.ore) + '</strong>'
   if (v.labChf) calc += '<br>🔧 Laboratorio: ' + (v.aCorpo ? '' : (v.q === null ? '—' : f(v.q, 2)) + ' × ') + 'CHF ' + f(v.labChf, 2) + (st.analisi.costoOraLab ? ' ÷ ' + f(st.analisi.costoOraLab, 2) + ' CHF/h' : '') + ' = <strong>' + fOre(v.oreLab) + '</strong>'
   var etich = (v.aCorpo ? ' <span class="off-etichetta">a corpo: i minuti sono il totale</span>' : '') +
     (v.eventuale ? ' <span class="off-etichetta">eventuale</span>' : '') + (v.incluso ? ' <span class="off-etichetta">inclusa</span>' : '')
-  // v7: voce esterna senza minuti → campo per scrivere le ore (si spunta da sola quando le ore ci sono)
-  var mano = v.senzaMinuti
-    ? '<div class="off-ore-mano"><label>👷 Ore del lattoniere per questa voce <input type="text" inputmode="decimal" data-off-ore-mano="' + v.id + '" value="' + (v.oreMano > 0 ? esc(f(v.oreMano, 2)) : '') + '" placeholder="es. 3,5" style="width:90px;text-align:right" aria-label="Ore a mano della riga ' + v.riga + '"> h</label></div>'
-    : ''
-  if (v.senzaMinuti) calc = (v.q === null ? '—' : f(v.q, 2)) + ' ' + esc(v.unita || '') + ' · minuti vuoti nell\'offerta' + (v.oreMano > 0 ? ' · scritte a mano: <strong>' + fOre(v.oreMano) + '</strong>' : '')
   return '<div class="off-voce' + (v.avvisi.length ? ' con-avviso' : '') + '">' +
     (conOre
       ? '<label class="off-spunta-voce"><input type="checkbox" data-off-voce="' + v.id + '"' + (st.scelte[v.id] ? ' checked' : '') + '>'
       : '<div class="off-spunta-voce"><span class="off-niente" title="0 ore: niente da spuntare">0 h</span>') +
     '<span class="off-testo">riga ' + v.riga + (v.codice ? ' · ' + esc(v.codice) : '') + ' · ' + esc(v.testo.length > 140 ? v.testo.slice(0, 137) + '…' : v.testo || '(senza descrizione)') + etich + '</span>' +
     (conOre ? '</label>' : '</div>') +
-    '<div class="off-calc">' + calc + '</div>' + mano +
+    '<div class="off-calc">' + calc + '</div>' +
     htmlTipoVoce(st, v) +
-    v.avvisi.map(function (a) { return '<div class="off-avviso">⚠️ ' + esc(a) + '</div>' }).join('') + '</div>'
+    v.avvisi.map(function (a) { return '<div class="off-avviso">⚠️ ' + esc(a) + '</div>' }).join('') +
+    htmlOreMano(st, v) + '</div>'
 }
 function htmlCapOfferta(st, cap, esterno) {
   var voci = cap.voci.filter(function (v) { return v.esterno === esterno })
@@ -1087,18 +1119,19 @@ function htmlCapOfferta(st, cap, esterno) {
   voci.forEach(function (v) { var o = O.oreDiTipo(v, st.tipi); for (var k in o) tipiCap[k] += o[k] })
   var tot = esterno ? tipiCap.E : tipiCap.C
   var nAvv = voci.filter(function (v) { return v.avvisi.length }).length
+  var nMancanti = voci.filter(function (v) { return v.oreMancanti }).length
   var chiave = cap.id + (esterno ? 'e' : 'i')
   var altri = esterno ? '' : (tipiCap.U > 0 ? ' · 🖥️ Ufficio ' + fOre(tipiCap.U) : '') + (tipiCap.L > 0 ? ' · 🔧 Laboratorio ' + fOre(tipiCap.L) : '')
   var k3 = esterno ? [] : Object.keys(cap.costiSenzaOre || {})
   var h = '<div class="off-cap' + (esterno ? ' esterno' : '') + '" data-off-blocco="' + chiave + '">' +
-    '<label class="off-spunta"><input type="checkbox" data-off-cap="' + chiave + '"' + (tot > 0 ? '' : ' disabled') + '>' +
-    '<span class="off-nome">' + esc(cap.titolo) + (esterno ? ' <span class="off-etichetta est">👷 Esterni · ' + esc(O.SCRITTA_ESTERNO) + '</span>' : '') + '</span>' +
+    '<label class="off-spunta"><input type="checkbox" data-off-cap="' + chiave + '"' + (tot > 0 || nMancanti ? '' : ' disabled') + '>' +
+    '<span class="off-nome">' + esc(cap.titolo) + (esterno ? ' <span class="off-etichetta est">👷 ' + esc(O.SCRITTA_ESTERNO) + '</span>' : '') + '</span>' +
     '<span class="off-ore" data-off-ore="' + chiave + '"></span></label>' +
-    '<div class="off-sotto">Nell\'offerta: ' + (esterno ? '' : '🏗️ Cantiere ') + fOre(tot) + altri + ' · ' + voci.length + (voci.length === 1 ? ' voce' : ' voci') +
-    (nAvv ? ' · <span class="off-avv">⚠️ ' + nAvv + (nAvv === 1 ? ' voce' : ' voci') + ' con avvisi</span>' : '') + (tot > 0 ? '' : ' · niente da creare (0 h)') + '</div>' +
-    (esterno && voci.some(function (v) { return v.senzaMinuti && !(v.oreMano > 0) }) ? '<div class="esito attenzione">⚠️ ' + voci.filter(function (v) { return v.senzaMinuti && !(v.oreMano > 0) }).length + ' voci senza minuti: ore mancanti, scrivile tu (apri «Vedi le voci»).</div>' : '') +
+    '<div class="off-sotto">Nell\'offerta: ' + (esterno ? '👷 Esterni ' : '🏗️ Cantiere ') + fOre(tot) + altri + ' · ' + voci.length + (voci.length === 1 ? ' voce' : ' voci') +
+    (nMancanti ? ' · <span class="off-avv">✍️ ' + nMancanti + (nMancanti === 1 ? ' voce' : ' voci') + ' con 0 minuti: ore mancanti, scrivile tu</span>' : '') +
+    (nAvv - nMancanti > 0 ? ' · <span class="off-avv">⚠️ ' + (nAvv - nMancanti) + (nAvv - nMancanti === 1 ? ' voce' : ' voci') + ' con avvisi</span>' : '') + (tot > 0 || nMancanti ? '' : ' · niente da creare (0 h)') + '</div>' +
     (k3.length ? '<div class="off-sotto">ℹ️ Costi ' + esc(k3.join(' / ')) + ' in CHF senza ore (' + k3.map(function (k) { return cap.costiSenzaOre[k] }).reduce(function (a, b) { return a + b }, 0) + ' voci): non sono nelle ore.</div>' : '') +
-    '<details data-off-dettagli="' + chiave + '"><summary>Vedi le voci (' + voci.length + ')</summary>' +
+    '<details data-off-dettagli="' + chiave + '"' + (nMancanti ? ' open' : '') + '><summary>Vedi le voci (' + voci.length + ')</summary>' +
     voci.map(function (v) { return htmlVoceOfferta(st, v) }).join('') + '</details></div>'
   return h
 }
@@ -1108,7 +1141,7 @@ function htmlAltriTipi(st) {
   var righe = { U: [], L: [] }, tot = { U: 0, L: 0 }
   a.voci.forEach(function (v) {
     if (!st.scelte[v.id]) return
-    var o = O.oreDiTipo(v, st.tipi)
+    var o = O.oreDiTipo(v, st.tipi, st.oreMano)
     ;['U', 'L'].forEach(function (k) { if (o[k] > 0) { tot[k] += o[k]; righe[k].push({ v: v, ore: o[k] }) } })
   })
   var testoVuoto = { U: 'Nessuna voce. Per una voce d\'ufficio apri «Vedi le voci» e premi «🖥️ Ufficio».', L: 'Nessuna voce. Per una voce di laboratorio apri «Vedi le voci» e premi «🔧 Laboratorio».' }
@@ -1119,22 +1152,33 @@ function htmlAltriTipi(st) {
         : '<p class="aiuto">' + testoVuoto[k] + '</p>') + '</div>'
   }).join('')
 }
+// v7: i 4 totali separati (squadra / esterni / ufficio / laboratorio)
+function htmlQuattroTotali(t, titolo) {
+  return '<div class="off-totali" role="list" aria-label="' + esc(titolo) + '">' +
+    '<div class="off-totale squadra" role="listitem"><span>🏗️ Ore squadra</span><strong data-off-tot="C">' + fOre(t.C) + '</strong></div>' +
+    '<div class="off-totale esterni" role="listitem"><span>👷 Ore esterni</span><strong data-off-tot="E">' + fOre(t.E) + '</strong></div>' +
+    '<div class="off-totale" role="listitem"><span>🖥️ Ore ufficio</span><strong data-off-tot="U">' + fOre(t.U) + '</strong></div>' +
+    '<div class="off-totale" role="listitem"><span>🔧 Ore laboratorio</span><strong data-off-tot="L">' + fOre(t.L) + '</strong></div></div>'
+}
 function htmlOfferta(c, st) {
   var a = st.analisi
   var esistenti = (ST.capPer[c.id] || []).slice().sort(function (x, y) { return x.ordine - y.ordine })
-  var tt = O.totaliPerTipo(a, st.tipi).tot
+  var tt = O.totaliPerTipo(a, st.tipi, null, st.oreMano).tot
   var h = '<div class="esito ok">✔ Offerta letta: <strong>' + esc(st.nomeFile) + '</strong> · ' + a.capitoli.length + ' capitoli · ' +
-    '🏗️ Squadra ' + fOre(tt.C) + (a.nEsterne ? ' · 👷 Esterni ' + fOre(tt.E) : '') + (tt.U > 0 ? ' · 🖥️ Ufficio ' + fOre(tt.U) : '') + (tt.L > 0 ? ' · 🔧 Laboratorio ' + fOre(tt.L) : '') + '</div>' +
+    '🏗️ Cantiere ' + fOre(tt.C) + (tt.U > 0 ? ' · 🖥️ Ufficio ' + fOre(tt.U) : '') + (tt.L > 0 ? ' · 🔧 Laboratorio ' + fOre(tt.L) : '') + (a.nEsterne ? ' · 👷 esterni ' + fOre(tt.E) : '') + '</div>' +
     (a.fineOfferta && a.fineOfferta.nIgnorate ? '<p class="off-piccolo">Ignorato dopo il prezzo finale (riga ' + a.fineOfferta.riga + '): ' + a.fineOfferta.nIgnorate + (a.fineOfferta.nIgnorate === 1 ? ' riga' : ' righe') + ' (acconti, pagamenti).</p>' : '') +
     st.avvisi.map(function (x) { return '<div class="esito attenzione">⚠️ ' + esc(x) + '</div>' }).join('') +
-    '<p class="aiuto">Spunta i capitoli che vuoi nel Calendario. Con «Vedi le voci» spunti o togli le singole voci e scegli il tipo di ore: 🏗️ Cantiere (va nel piano della squadra), 🖥️ Ufficio o 🔧 Laboratorio (si vedono qui sotto, non diventano capitoli). Le voci degli Esterni (lattoniere) vanno nel gruppo 👷 Esterni, mai nel piano della squadra. Le voci «eventuale» non sono spuntate: spuntale se il cliente le ha prese.</p>'
+    '<p class="aiuto">Spunta i capitoli che vuoi nel Calendario. Con «Vedi le voci» spunti o togli le singole voci e scegli il tipo di ore: 🏗️ Cantiere (va nel piano della squadra), 🖥️ Ufficio o 🔧 Laboratorio (si vedono qui sotto, non diventano capitoli). Le voci «eventuale» non sono spuntate: spuntale se il cliente le ha prese.</p>'
   var interni = a.capitoli.filter(function (cap) { return cap.nInterne })
   h += '<div class="off-gruppo">' + interni.map(function (cap) { return htmlCapOfferta(st, cap, false) }).join('') + '</div>'
   h += '<div class="off-altri" id="off-altri"></div>'
   var est = a.capitoli.filter(function (cap) { return cap.nEsterne })
   if (est.length) {
-    h += '<div class="off-gruppo esterni"><h4>👷 Esterni · solo tempistica</h4>' +
-      '<p class="aiuto">Voci con minuti ma senza costo cantiere (es. lattoniere esterno): ' + fOre(a.oreEsterne) + '. Sono spuntate come le altre (le «eventuale» no). Diventano capitoli a parte, con «(' + esc(O.SCRITTA_ESTERNO) + ')» nel nome: le loro ore stanno nel gruppo 👷 Esterni, mai nel piano della squadra. «Riempi» non le copre: si assegnano a mano con «👷 Assegna a…».</p>' +
+    h += '<div class="off-gruppo esterni"><h4>👷 Esterni — ' + esc(O.SCRITTA_ESTERNO) + '</h4>' +
+      '<p class="aiuto">Voci fatte da una ditta esterna (es. lattoniere): minuti senza costo cantiere, oppure costo terzi senza minuti. Nell\'offerta: ' + fOre(a.oreEsterne) +
+      (a.nOreMancanti ? ' + ' + a.nOreMancanti + (a.nOreMancanti === 1 ? ' voce' : ' voci') + ' con 0 minuti (ore da scrivere)' : '') + '. Sono spuntate come le altre (le «eventuale» no). ' +
+      'Diventano capitoli del gruppo 👷 Esterni («' + esc(O.PREFISSO_ESTERNI) + '…»), <strong>mai del piano della squadra</strong>: «Riempi» non le dà ai Dipendenti. Si assegnano a un Esterno con «👷 Assegna a…» nella scheda.</p>' +
+      (conPL03() ? '' : '<div class="esito attenzione">⚠️ Manca l\'aggiornamento del database (PL_03): le ore degli Esterni si vedono qui nel riepilogo, ma non diventano capitoli. I capitoli della squadra si creano normalmente.</div>') +
       est.map(function (cap) { return htmlCapOfferta(st, cap, true) }).join('') + '</div>'
   }
   h += '<div class="off-riepilogo" id="off-riepilogo"></div>'
@@ -1147,6 +1191,14 @@ function htmlOfferta(c, st) {
   h += '<div class="riga-bottoni"><button type="button" class="primario grande" id="off-conferma">✔ Crea i capitoli</button><button type="button" class="grande" id="off-annulla">Annulla</button></div><div id="off-conferma-esito"></div>'
   return h
 }
+// Capitoli da creare: senza PL_03 quelli esterni non si creano (restano solo nel riepilogo)
+function capitoliDaCreare(st) {
+  var p = O.proponiCapitoli(st.analisi, st.scelte, st.tipi, st.oreMano)
+  p.squadra = p.nuovi.filter(function (x) { return !x.esterno })
+  p.esterni = p.nuovi.filter(function (x) { return x.esterno })
+  p.daCreare = conPL03() ? p.nuovi : p.squadra
+  return p
+}
 // Aggiorna ore, spunte dei capitoli, gruppi Ufficio / Laboratorio e riepilogo dopo ogni clic
 function aggiornaOfferta(box, c) {
   var st = OFF[c.id]
@@ -1156,7 +1208,7 @@ function aggiornaOfferta(box, c) {
       var chiave = cap.id + (esterno ? 'e' : 'i')
       var cb = box.querySelector('[data-off-cap="' + chiave + '"]')
       if (!cb) return
-      var conOre = cap.voci.filter(function (v) { return v.esterno === esterno && v.ore > 0 && (esterno || O.tipoMinuti(v, st.tipi) === 'C') })
+      var conOre = cap.voci.filter(function (v) { return voceConOre(v, st, esterno) })
       var scelte = conOre.filter(function (v) { return st.scelte[v.id] })
       cb.checked = scelte.length > 0
       cb.indeterminate = scelte.length > 0 && scelte.length < conOre.length
@@ -1170,24 +1222,26 @@ function aggiornaOfferta(box, c) {
   box.querySelectorAll('[data-off-voce]').forEach(function (x) { x.checked = !!st.scelte[x.dataset.offVoce] })
   var altri = box.querySelector('#off-altri')
   if (altri) altri.innerHTML = htmlAltriTipi(st)
-  var p = O.proponiCapitoli(st.analisi, st.scelte, st.tipi)
+  var p = capitoliDaCreare(st)
+  var t = O.totaliPerTipo(st.analisi, st.tipi, st.scelte, st.oreMano).tot
   var r = box.querySelector('#off-riepilogo')
-  // v7: ore spuntate separate: squadra / esterni / ufficio / laboratorio
-  var tt = O.totaliPerTipo(st.analisi, st.tipi, st.scelte).tot
-  var quattro = '<div class="off-quattro" role="list" aria-label="Ore spuntate per gruppo">' +
-    '<span role="listitem">🏗️ Ore squadra <strong data-off-tot="C">' + fOre(tt.C) + '</strong></span>' +
-    '<span role="listitem">👷 Ore esterni <strong data-off-tot="E">' + fOre(tt.E) + '</strong></span>' +
-    '<span role="listitem">🖥️ Ore ufficio <strong data-off-tot="U">' + fOre(tt.U) + '</strong></span>' +
-    '<span role="listitem">🔧 Ore laboratorio <strong data-off-tot="L">' + fOre(tt.L) + '</strong></span></div>'
-  var nSq = p.nuovi.filter(function (x) { return !x.esterno }), nEs = p.nuovi.filter(function (x) { return x.esterno })
   var lista = function (l) { return '<ol>' + l.map(function (x) { return '<li>' + esc(x.nome) + ' · <strong>' + fOre(x.ore) + '</strong></li>' }).join('') + '</ol>' }
-  r.innerHTML = quattro + (p.nuovi.length
-    ? '<strong>Si creano ' + p.nuovi.length + (p.nuovi.length === 1 ? ' capitolo' : ' capitoli') + ', totale ' + fOre(p.totale) + '</strong> (tutti «All\'aperto», poi li puoi cambiare):' +
-      (nSq.length ? '<div>🏗️ Squadra:</div>' + lista(nSq) : '') + (nEs.length ? '<div>👷 Esterni (a parte, non nel piano della squadra):</div>' + lista(nEs) : '')
-    : '<strong>Niente spuntato:</strong> spunta almeno un capitolo con ore 🏗️ Cantiere o 👷 Esterni.')
+  var h = '<h4>Riepilogo delle voci spuntate</h4>' + htmlQuattroTotali(t, 'Ore delle voci spuntate')
+  if (p.esterneSenzaOre) h += '<div class="esito attenzione">⚠️ ' + p.esterneSenzaOre + (p.esterneSenzaOre === 1 ? ' voce esterna spuntata ha' : ' voci esterne spuntate hanno') + ' 0 minuti: ore mancanti, scrivile tu (campo ✍️ nella voce). Senza ore non entrano nel totale esterni.</div>'
+  h += p.squadra.length
+    ? '<p><strong>🏗️ Squadra: si creano ' + p.squadra.length + (p.squadra.length === 1 ? ' capitolo' : ' capitoli') + ', ' + fOre(p.totale) + '</strong> (tutti «All\'aperto», poi li puoi cambiare):</p>' + lista(p.squadra)
+    : '<p><strong>🏗️ Squadra:</strong> nessun capitolo spuntato.</p>'
+  if (p.esterni.length) {
+    h += conPL03()
+      ? '<p><strong>👷 Esterni: si ' + (p.esterni.length === 1 ? 'crea 1 capitolo' : 'creano ' + p.esterni.length + ' capitoli') + ', ' + fOre(p.totaleEsterni) + '</strong> (fuori dal piano della squadra):</p>' + lista(p.esterni)
+      : '<p><strong>👷 Esterni ' + fOre(p.totaleEsterni) + ':</strong> non diventano capitoli finché manca l\'aggiornamento del database (PL_03).</p>'
+  }
+  if (!p.daCreare.length) h += '<p><strong>Niente da creare:</strong> spunta almeno un capitolo con ore.</p>'
+  r.innerHTML = h
   var b = box.querySelector('#off-conferma')
-  b.disabled = !p.nuovi.length
-  b.textContent = p.nuovi.length ? '✔ Crea ' + p.nuovi.length + (p.nuovi.length === 1 ? ' capitolo' : ' capitoli') + ' (' + fOre(p.totale) + ')' : '✔ Crea i capitoli'
+  b.disabled = !p.daCreare.length
+  var totCrea = C.sommaOre(p.daCreare)
+  b.textContent = p.daCreare.length ? '✔ Crea ' + p.daCreare.length + (p.daCreare.length === 1 ? ' capitolo' : ' capitoli') + ' (' + fOre(totCrea) + ')' : '✔ Crea i capitoli'
 }
 // Dopo un cambio di tipo: si ridisegna l'anteprima, con le stesse voci aperte e lo stesso punto della finestra
 function ridisegnaOfferta(w, c) {
@@ -1195,7 +1249,7 @@ function ridisegnaOfferta(w, c) {
   var aperti = Array.from(box.querySelectorAll('details[open]')).map(function (d) { return d.dataset.offDettagli })
   var fin = box.closest('.finestra'), su = fin ? fin.scrollTop : 0, suC = w.corpo.scrollTop
   box.innerHTML = htmlOfferta(c, OFF[c.id])
-  aperti.forEach(function (k) { var d = box.querySelector('details[data-off-dettagli="' + k + '"]'); if (d) d.open = true })
+  box.querySelectorAll('details[data-off-dettagli]').forEach(function (d) { d.open = aperti.indexOf(d.dataset.offDettagli) >= 0 })
   collegaAnteprimaOfferta(w, c)
   if (fin) fin.scrollTop = su
   w.corpo.scrollTop = suC
@@ -1213,7 +1267,7 @@ function collegaOfferta(w, c) {
       await new Promise(function (r) { setTimeout(r, 30) })   // lascia comparire la scritta
       var ris = O.leggiOfferta(window.XLSX, window.CTImporta, new Uint8Array(buf), file.name, file.size)
       if (!ris.ok) { delete OFF[c.id]; box.innerHTML = '<div class="esito ko">❌ ' + esc(ris.messaggio) + '</div>'; return }
-      OFF[c.id] = { nomeFile: file.name, analisi: ris.analisi, avvisi: ris.avvisi, scelte: O.scelteIniziali(ris.analisi), tipi: O.tipiIniziali(ris.analisi, memoriaTipi()), modo: null }
+      OFF[c.id] = { nomeFile: file.name, analisi: ris.analisi, avvisi: ris.avvisi, scelte: O.scelteIniziali(ris.analisi), tipi: O.tipiIniziali(ris.analisi, memoriaTipi()), oreMano: {}, modo: null }
       box.innerHTML = htmlOfferta(c, OFF[c.id])
       collegaAnteprimaOfferta(w, c)
     })
@@ -1226,14 +1280,16 @@ function collegaAnteprimaOfferta(w, c) {
   box.querySelectorAll('[data-off-voce]').forEach(function (x) {
     x.addEventListener('change', function () { st.scelte[x.dataset.offVoce] = x.checked; aggiornaOfferta(box, c) })
   })
-  // v7: ore scritte a mano per le voci esterne senza minuti
-  box.querySelectorAll('[data-off-ore-mano]').forEach(function (x) {
-    x.addEventListener('change', function () {
-      var t = x.value.trim()
-      var ore = t === '' ? 0 : C.leggiOre(t)
-      if (t !== '' && !(ore > 0)) { toast('Ore non leggibili: «' + t + '»', true); return }
-      O.impostaOreMano(st.analisi, x.dataset.offOreMano, ore, st.scelte)
-      ridisegnaOfferta(w, c)
+  // v7: ore scritte a mano (voce esterna con 0 minuti). Si aggiorna il riepilogo, la casella resta com'è.
+  box.querySelectorAll('[data-off-oremano]').forEach(function (inp) {
+    inp.addEventListener('input', function () {
+      var id = inp.dataset.offOremano, txt = inp.value.trim()
+      var ore = txt === '' ? NaN : C.leggiOre(txt)
+      var es = box.querySelector('[data-off-oremano-esito="' + id + '"]')
+      if (txt === '') { delete st.oreMano[id]; es.textContent = '' }
+      else if (ore > 0 && ore <= 2000) { st.oreMano[id] = Math.round(ore * 100) / 100; es.textContent = '✔ ' + fOre(st.oreMano[id]); if (!st.scelte[id]) st.scelte[id] = true }
+      else { delete st.oreMano[id]; es.textContent = '⚠️ ore non leggibili' }
+      aggiornaOfferta(box, c)
     })
   })
   // tipo di ore: vale per tutte le voci con lo stesso codice e si ricorda nel browser
@@ -1253,7 +1309,7 @@ function collegaAnteprimaOfferta(w, c) {
     x.addEventListener('change', function () {
       var cap = st.analisi.capitoli.find(function (k) { return k.id === x.dataset.offCap.slice(0, -1) })
       var esterno = x.dataset.offCap.slice(-1) === 'e'
-      var conOre = cap.voci.filter(function (v) { return v.esterno === esterno && v.ore > 0 && (esterno || O.tipoMinuti(v, st.tipi) === 'C') })
+      var conOre = cap.voci.filter(function (v) { return voceConOre(v, st, esterno) })
       var qualcuna = conOre.some(function (v) { return st.scelte[v.id] })
       // spunta: le voci con ore, senza le «eventuale» (se ci sono solo eventuali, anche quelle); togli: tutte
       var daSpuntare = conOre.filter(function (v) { return !v.eventuale })
@@ -1270,20 +1326,30 @@ function collegaAnteprimaOfferta(w, c) {
   box.querySelector('#off-conferma').addEventListener('click', function () {
     esegui(async function () {
       var es = box.querySelector('#off-conferma-esito')
-      var p = O.proponiCapitoli(st.analisi, st.scelte, st.tipi)
-      if (!p.nuovi.length) { es.innerHTML = '<div class="esito ko">Niente spuntato: spunta almeno un capitolo.</div>'; return }
+      var p = capitoliDaCreare(st)
+      var nuovi = p.daCreare
+      if (!nuovi.length) { es.innerHTML = '<div class="esito ko">Niente spuntato: spunta almeno un capitolo.</div>'; return }
       var esistenti = (ST.capPer[c.id] || []).slice()
       if (esistenti.length && st.modo !== 'aggiungi' && st.modo !== 'sostituisci') {
         es.innerHTML = '<div class="esito ko">Questa commessa ha già dei capitoli: scegli sopra «Aggiungi in fondo» o «Sostituisci».</div>'; return
       }
+      var totCrea = C.sommaOre(nuovi)
       var sost = esistenti.length > 0 && st.modo === 'sostituisci'
-      if (sost && !await conferma('Togliere i ' + esistenti.length + ' capitoli che ci sono adesso (' + esc(esistenti.map(function (x) { return x.nome + ' ' + fOre(x.ore) }).join(', ')) + ') e mettere i ' + p.nuovi.length + ' dell\'offerta (' + fOre(p.totale) + ')?<br>Le assegnazioni del piano restano come sono.', { si: 'Sostituisci', pericolo: true })) return
+      if (sost && !await conferma('Togliere i ' + esistenti.length + ' capitoli che ci sono adesso (' + esc(esistenti.map(function (x) { return x.nome + ' ' + fOre(x.ore) }).join(', ')) + ') e mettere i ' + nuovi.length + ' dell\'offerta (' + fOre(totCrea) + ')?<br>Le assegnazioni del piano restano come sono.', { si: 'Sostituisci', pericolo: true })) return
       var base = sost ? 0 : esistenti.reduce(function (m, x) { return Math.max(m, x.ordine) }, 0)
-      await D.inserisci('pl_capitoli', p.nuovi.map(function (x, i) { return { commessa_id: c.id, ordine: base + i + 1, nome: x.nome, ore: x.ore, ubicazione: x.ubicazione } }))
+      await D.inserisci('pl_capitoli', nuovi.map(function (x, i) {
+        var riga = { commessa_id: c.id, ordine: base + i + 1, nome: x.nome, ore: x.ore, ubicazione: x.ubicazione }
+        // con PL_03 «esterno» va su OGNI riga: in un inserimento di più righe PostgREST mette NULL (non il
+        // valore di base) dove la colonna manca, e la colonna è obbligatoria. Senza PL_03 non si manda mai.
+        if (conPL03()) riga.esterno = !!x.esterno
+        return riga
+      }))
       if (sost) await D.eliminaId('pl_capitoli', esistenti.map(function (x) { return x.id }))
       delete OFF[c.id]
       await ricarica(['capitoli']); riapriScheda(w)
-      toast(p.nuovi.length + (p.nuovi.length === 1 ? ' capitolo creato' : ' capitoli creati') + ' dall\'offerta (' + fOre(p.totale) + ')' + (sost ? ', i ' + esistenti.length + ' di prima tolti' : ''))
+      var nE = nuovi.filter(function (x) { return x.esterno }).length
+      toast(nuovi.length + (nuovi.length === 1 ? ' capitolo creato' : ' capitoli creati') + ' dall\'offerta: squadra ' + fOre(p.totale) +
+        (nE ? ', 👷 Esterni ' + fOre(p.totaleEsterni) : '') + (sost ? ', i ' + esistenti.length + ' di prima tolti' : ''))
     })
   })
   aggiornaOfferta(box, c)
@@ -1294,10 +1360,7 @@ function collegaCapitoli(w, c) {
     inp.addEventListener('change', function () {
       esegui(async function () {
         if (!inp.value.trim()) { toast('Il nome non può essere vuoto', true); return }
-        var nome = inp.dataset.capEsterno ? C.nomeConEsterno(inp.value) : inp.value.trim()
-        // un nome scritto a mano con la scritta «esterno» farebbe diventare il capitolo degli Esterni: no
-        if (!inp.dataset.capEsterno && C.eCapitoloEsterno({ nome: nome })) nome = C.nomeSenzaEsterno(nome)
-        await D.aggiorna('pl_capitoli', inp.dataset.capNome, { nome: nome }); await ricarica(['capitoli'])
+        await D.aggiorna('pl_capitoli', inp.dataset.capNome, { nome: inp.value.trim() }); await ricarica(['capitoli'])
       })
     })
   })
@@ -1319,6 +1382,23 @@ function collegaCapitoli(w, c) {
       })
     })
   })
+  // v7: capitolo della squadra ↔ degli Esterni (solo con PL_03)
+  w.corpo.querySelectorAll('[data-cap-chi]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      esegui(async function () {
+        var x = ST.dati.capitoli.find(function (k) { return k.id === b.dataset.capChi })
+        var verso = x.esterno === true ? false : true
+        if (!await conferma('Il capitolo «' + esc(x.nome) + '» (' + fOre(x.ore) + ') diventa ' + (verso
+          ? '<strong>👷 Esterni</strong>: esce dalle ore della squadra («Riempi», margini) e si assegna a un Esterno con «Assegna a…».'
+          : '<strong>🏗️ Squadra</strong>: entra nelle ore della squadra e «Riempi» lo dà ai Dipendenti.'), { si: verso ? 'Esterni' : 'Squadra' })) return
+        await D.aggiorna('pl_capitoli', x.id, { esterno: verso })
+        await ricarica(['capitoli']); riapriScheda(w)
+      })
+    })
+  })
+  w.corpo.querySelectorAll('[data-assegna-esterni]').forEach(function (b) {
+    b.addEventListener('click', function () { apriAssegnaEsterni(c, w) })
+  })
   w.corpo.querySelectorAll('[data-cap-togli]').forEach(function (b) {
     b.addEventListener('click', function () {
       esegui(async function () {
@@ -1333,12 +1413,12 @@ function collegaCapitoli(w, c) {
       var nome = q('#cap-nuovo-nome').value.trim(), ore = C.leggiOre(q('#cap-nuovo-ore').value)
       if (!nome || !(ore > 0)) { toast('Scrivi nome e ore del capitolo', true); return }
       var ordine = (ST.capPer[c.id] || []).reduce(function (m, x) { return Math.max(m, x.ordine) }, 0) + 1
-      nome = q('#cap-nuovo-chi').value === 'esterni' ? C.nomeConEsterno(nome) : C.nomeSenzaEsterno(nome)
-      await D.inserisci('pl_capitoli', { commessa_id: c.id, ordine: ordine, nome: nome, ore: Math.round(ore * 100) / 100, ubicazione: q('#cap-nuovo-ubi').value })
+      var riga = { commessa_id: c.id, ordine: ordine, nome: nome, ore: Math.round(ore * 100) / 100, ubicazione: q('#cap-nuovo-ubi').value }
+      if (q('#cap-nuovo-chi')) riga.esterno = q('#cap-nuovo-chi').value === 'esterni'      // il campo c'è solo con PL_03
+      await D.inserisci('pl_capitoli', riga)
       await ricarica(['capitoli']); riapriScheda(w)
     })
   })
-  w.corpo.querySelectorAll('[data-assegna-esterno]').forEach(function (b) { b.addEventListener('click', function () { apriAssegnaEsterno(c, w) }) })
   collegaOfferta(w, c)
 }
 
@@ -1346,7 +1426,7 @@ function collegaCapitoli(w, c) {
 function sezioneRiepilogo(c) {
   var r = rie(c)
   var h = '<div class="sezione"><h3>📊 Durata (dalle assegnazioni)</h3><div class="riquadro"><dl>' +
-    '<dt>Ore preventivo (squadra)</dt><dd>' + fOre(r.orePreventivo) + '</dd>' +
+    '<dt>Ore preventivo</dt><dd>' + fOre(r.orePreventivo) + '</dd>' +
     '<dt>Ore pianificate</dt><dd>' + fOre(r.oreAssegnate) + '</dd>' +
     '<dt>Residue</dt><dd>' + (r.residue > 1e-9 ? '⚠️ Mancano ' + fOre(r.residue) + ' non pianificate' : r.residue < -1e-9 ? '⚠️ Pianificate ' + fOre(-r.residue) + ' oltre il preventivo' : '✔ 0 h: tutto pianificato') + '</dd>' +
     '<dt>Inizio</dt><dd>' + gAnno(r.inizio) + '</dd><dt>Fine</dt><dd>' + gAnno(r.fine) + '</dd>' +
@@ -1356,7 +1436,16 @@ function sezioneRiepilogo(c) {
     h += '<dt>Ultimo giorno</dt><dd>' + C.fmtGiorno(ug.data) + ': ' + fOre(ug.oreLavoro) + ' di lavoro, ' + fOre(ug.oreLibere) + ' libere</dd>'
   }
   h += '</dl></div>'
-  if (r.oreEsterni > 0 || r.oreEsterniAssegnate > 0) h += htmlEsterniCommessa(c, r)
+  // v7: gli Esterni a parte (capitoli 👷 Esterni contro assegnazioni degli Esterni)
+  var e = r.esterni
+  if (e.nCapitoli || e.oreAssegnate > 0) {
+    h += '<h3>👷 Esterni (a parte, non nella squadra)</h3><div class="riquadro"><dl>' +
+      '<dt>Ore Esterni</dt><dd>' + fOre(e.orePreventivo) + '</dd>' +
+      '<dt>Assegnate</dt><dd>' + fOre(e.oreAssegnate) + '</dd>' +
+      '<dt>Residue</dt><dd>' + (e.residue > 1e-9 ? '⚠️ Mancano ' + fOre(e.residue) + ' da assegnare' : e.residue < -1e-9 ? '⚠️ Assegnate ' + fOre(-e.residue) + ' oltre le ore Esterni' : '✔ 0 h: tutto assegnato') + '</dd>' +
+      (e.inizio ? '<dt>Giorni</dt><dd>' + e.giorni + ' · ' + gAnno(e.inizio) + (e.fine !== e.inizio ? ' – ' + gAnno(e.fine) : '') + '</dd>' : '') +
+      '</dl></div>'
+  }
   var v = Number(c.viaggio_min_andata || 0)
   h += '<h3>🚗 Di cui viaggio</h3><div class="riquadro"><dl>' +
     '<dt>Ore preventivo</dt><dd>' + fOre(r.orePreventivo) + '</dd>' +
@@ -1367,113 +1456,13 @@ function sezioneRiepilogo(c) {
   return h
 }
 
-// ── v7 · Esterni della commessa: ore a parte e «Assegna a…» ───────────────────
-function htmlEsterniCommessa(c, r) {
-  var per = {}
-  C.soloEsterni(ST.assPer[c.id] || [], ST.esterniSet).forEach(function (a) {
-    var k = a.persona_id; per[k] = per[k] || { ore: 0, giorni: {}, dal: a.data, al: a.data }
-    per[k].ore += Number(a.ore || 0); per[k].giorni[a.data] = 1
-    if (a.data < per[k].dal) per[k].dal = a.data
-    if (a.data > per[k].al) per[k].al = a.data
-  })
-  var righe = Object.keys(per).map(function (pid) {
-    var o = ST.dati.operai.find(function (x) { return x.id === pid })
-    var x = per[pid]
-    return '<li><strong>' + esc(ST.nomi[pid] || 'Esterno') + '</strong> <span class="etichetta-esterno">' + esc(C.etichettaEsterno(o, ST.dati.ditte)) + '</span> · ' +
-      fOre(x.ore) + ' · ' + Object.keys(x.giorni).length + ' giorni (' + C.fmtGiorno(x.dal) + (x.al !== x.dal ? ' – ' + C.fmtGiorno(x.al) : '') + ')</li>'
-  })
-  var res = r.residueEsterni
-  return '<h3>👷 Esterni (a parte, non nel piano della squadra)</h3><div class="riquadro"><dl>' +
-    '<dt>Ore Esterni (preventivo)</dt><dd>' + fOre(r.oreEsterni) + ' <button type="button" class="piccolo" data-assegna-esterno>👷 Assegna a…</button></dd>' +
-    '<dt>Assegnate a Esterni</dt><dd>' + fOre(r.oreEsterniAssegnate) + '</dd>' +
-    '<dt>Residue Esterni</dt><dd>' + (res > 1e-9 ? '⚠️ Mancano ' + fOre(res) + ' da assegnare' : res < -1e-9 ? '⚠️ Assegnate ' + fOre(-res) + ' oltre il preventivo' : '✔ 0 h: tutto assegnato') + '</dd></dl>' +
-    (righe.length ? '<ul class="lista-esterni">' + righe.join('') + '</ul>' : '') + '</div>'
-}
-// «Assegna a…»: si sceglie l'Esterno (nome + ditta) e i giorni; le celle si riempiono da sole.
-// Si scrivono SOLO righe di quell'Esterno su questa commessa: prima le nuove, poi si tolgono le sue
-// vecchie dalla data «Dal» in poi (se l'inserimento fallisce non si è perso niente). Avvisa, non blocca.
-function apriAssegnaEsterno(c, schedaW) {
-  var w = apriFinestra('👷 Assegna a… · ' + c.numero, { centro: true, piccola: true })
-  if (!ST.esterni.length) {
-    w.corpo.innerHTML = '<div class="esito attenzione">Nessun Esterno attivo in Anagrafiche. Un lattoniere si aggiunge in Anagrafiche → Personale con rapporto «Esterno» e la sua ditta.</div>' +
-      '<div class="riga-bottoni"><button type="button" data-chiudi>Chiudi</button></div>'
-    w.corpo.querySelector('[data-chiudi]').addEventListener('click', w.chiudi)
-    return w
-  }
-  var r = rie(c)
-  var oggi = C.oggiIso()
-  var inizio = c.data_inizio && c.data_inizio > oggi ? c.data_inizio : C.spostaLavorativi(ST.cal, oggi, 0)
-  var proposta = r.residueEsterni > 0 ? r.residueEsterni : r.oreEsterni
-  w.corpo.innerHTML = '<p>Ore degli Esterni nel preventivo: <strong>' + fOre(r.oreEsterni) + '</strong> · già assegnate: <strong>' + fOre(r.oreEsterniAssegnate) + '</strong>.</p>' +
-    '<div class="campi">' +
-    campo('Esterno', '<select id="ae-chi"><option value="">— scegli —</option>' + ST.esterni.map(function (x) { return '<option value="' + x.id + '">' + esc(x.nome + ' · ' + x.etichetta.replace(/^👷 Esterno · /, '')) + '</option>' }).join('') + '</select><span class="etichetta-esterno" id="ae-ditta" hidden></span>') +
-    campo('Ore da assegnare', '<input id="ae-ore" inputmode="decimal" value="' + esc(proposta > 0 ? f(proposta, 2) : '') + '">', 'h') +
-    campo('Dal', '<input id="ae-dal" type="date" value="' + esc(inizio) + '">') +
-    campo('Al (facoltativo)', '<input id="ae-al" type="date">') + '</div>' +
-    '<p class="aiuto">Senza «Al»: giorni pieni da «Dal» finché le ore sono coperte. Con «Al»: le ore divise sui giorni lavorativi fra le due date. Weekend, festivi e chiusure si saltano.</p>' +
-    '<div id="ae-anteprima" aria-live="polite"></div>' +
-    '<div class="riga-bottoni"><button type="button" class="primario" id="ae-vai" disabled>✔ Assegna</button><button type="button" id="ae-annulla">Annulla</button></div><div id="ae-esito"></div>'
-  var q = function (sel) { return w.corpo.querySelector(sel) }
-  var piano = null
-  function calcola() {
-    piano = null
-    var pid = q('#ae-chi').value, ore = C.leggiOre(q('#ae-ore').value), dal = q('#ae-dal').value, al = q('#ae-al').value
-    var el = q('#ae-anteprima'), b = q('#ae-vai')
-    b.disabled = true
-    var scelto = ST.esterni.find(function (x) { return x.id === pid })
-    q('#ae-ditta').hidden = !scelto
-    q('#ae-ditta').textContent = scelto ? scelto.etichetta : ''
-    if (!pid) { el.innerHTML = '<p class="aiuto">Scegli l\'Esterno.</p>'; return }
-    if (!(ore > 0)) { el.innerHTML = '<div class="esito ko">Ore non leggibili.</div>'; return }
-    if (!dal) { el.innerHTML = '<div class="esito ko">Scegli la data «Dal».</div>'; return }
-    if (al && al < dal) { el.innerHTML = '<div class="esito ko">«Al» è prima di «Dal».</div>'; return }
-    var sue = (ST.assPer[c.id] || []).filter(function (a) { return a.persona_id === pid })
-    var dopo = sue.filter(function (a) { return a.data >= dal })
-    var altre = ST.dati.assegnazioni.filter(function (a) { return dopo.indexOf(a) < 0 })
-    var p = C.pianoEsterno({ persona_id: pid, oreTotali: ore, dal: dal, al: al || null, cal: ST.cal, commessa: c, viaggioIncluso: viaggioIncluso(), assenze: ST.dati.assenze, altreAssegnazioni: altre })
-    if (!p.assegnazioni.length) { el.innerHTML = '<div class="esito ko">Nessun giorno lavorativo trovato in quel periodo.</div>'; return }
-    if (p.oreNonCoperte > 0) { el.innerHTML = '<div class="esito ko">Non sono riuscito a coprire ' + fOre(p.oreNonCoperte) + ' (troppe chiusure?).</div>'; return }
-    // altre commesse dello stesso Esterno negli stessi giorni: avviso
-    var occupati = p.assegnazioni.filter(function (a) { return altre.some(function (x) { return x.persona_id === pid && x.data === a.data && x.commessa_id !== c.id }) }).map(function (a) { return C.fmtGiorno(a.data) })
-    piano = { pid: pid, dopo: dopo, nuove: p.assegnazioni }
-    el.innerHTML = '<div class="esito ok">Si creano <strong>' + p.giorni + (p.giorni === 1 ? ' giorno' : ' giorni') + '</strong> per ' + esc(ST.nomi[pid]) + ', ' + fOre(ore) + ': ' +
-      esc(p.assegnazioni.map(function (a) { return C.fmtGiorno(a.data) + ' ' + fOre(a.ore) }).join(' · ')) + '</div>' +
-      (p.oltre.length ? '<div class="esito attenzione">⚠️ ' + esc(p.oltre.map(function (x) { return C.fmtGiorno(x.data) + ': ' + fOre(x.ore) + ' (giornata ' + fOre(x.capacita) + ')' }).join(' · ')) + ': più ore della giornata di cantiere.</div>' : '') +
-      (occupati.length ? '<div class="esito attenzione">⚠️ ' + esc(ST.nomi[pid]) + ' ha già altre commesse il ' + esc(occupati.join(', ')) + '.</div>' : '') +
-      (dopo.length ? '<div class="esito attenzione">⚠️ Le ' + dopo.length + ' righe di ' + esc(ST.nomi[pid]) + ' su ' + esc(c.numero) + ' dal ' + gAnno(dal) + ' in poi (' + fOre(C.sommaOre(dopo)) + ') vengono sostituite.</div>' : '')
-    b.disabled = false
-  }
-  ;['#ae-chi', '#ae-ore', '#ae-dal', '#ae-al'].forEach(function (sel) { q(sel).addEventListener('change', calcola); q(sel).addEventListener('input', calcola) })
-  q('#ae-annulla').addEventListener('click', w.chiudi)
-  q('#ae-vai').addEventListener('click', function () {
-    esegui(async function () {
-      if (!piano) return
-      var righe = piano.nuove.map(function (a) { var x = rigaAss(a); x.commessa_id = c.id; return x })
-      await D.inserisci('pl_assegnazioni', righe)
-      try {
-        if (piano.dopo.length) await D.eliminaId('pl_assegnazioni', piano.dopo.map(function (a) { return a.id }))
-      } catch (e) {
-        await ricarica(['assegnazioni'])
-        throw new Error('ATTENZIONE: le righe nuove di ' + ST.nomi[piano.pid] + ' sono salvate ma le vecchie NON sono state tolte: ci sono doppioni in ' + c.numero + '. Ricarica la pagina e controlla.\n' + e.message)
-      }
-      await ricarica(['assegnazioni'])
-      w.chiudi()
-      toast(c.numero + ': ' + ST.nomi[piano.pid] + ' assegnato, ' + righe.length + (righe.length === 1 ? ' giorno' : ' giorni') + ' (' + fOre(C.sommaOre(righe)) + ')')
-      if (schedaW && _finestre.indexOf(schedaW) >= 0) riapriScheda(schedaW)
-    })
-  })
-  calcola()
-  return w
-}
-
 // Pianificazione: riempi, sposta, finito
 function sezionePianificazione(c) {
   if (c.interna) return '<div class="sezione"><h3>🗓️ Pianificazione</h3><p class="aiuto">Commessa interna: si assegna cella per cella.</p></div>'
   var r = rie(c)
   var h = '<div class="sezione"><h3>🗓️ Riempi automaticamente</h3>' +
-    '<p class="aiuto">Crea le assegnazioni giorno per giorno da questa data, saltando weekend, festivi, chiusure e assenze, finché le ' + fOre(r.orePreventivo) + ' del preventivo sono coperte. Poi correggi a mano.</p>' +
+    '<p class="aiuto">Crea le assegnazioni giorno per giorno da questa data, saltando weekend, festivi, chiusure e assenze, finché le ' + fOre(r.orePreventivo) + ' della squadra sono coperte. Solo Dipendenti: le ore 👷 Esterni si assegnano con «Assegna a…». Poi correggi a mano.</p>' +
     '<button type="button" class="primario" id="pi-riempi">Riempi automaticamente…</button>' +
-    (r.oreEsterni > 0 ? '<p class="aiuto">👷 Le ' + fOre(r.oreEsterni) + ' degli Esterni non entrano in «Riempi»: si assegnano a mano. <button type="button" class="piccolo" data-assegna-esterno>👷 Assegna a…</button></p>' : '') +
     '<h3>↔️ Sposta di N giorni lavorativi</h3><div class="campi">' + campo('Giorni lavorativi (negativo = indietro)', '<input id="pi-n" inputmode="numeric" value="1">', 'giorni') + '</div>' +
     '<div class="riga-bottoni"><button type="button" id="pi-sposta">Sposta</button></div>' +
     '<h3>✅ Finito il…</h3><div class="campi">' + campo('Data di fine lavori', '<input id="pi-finito" type="date" value="' + esc(c.finito_il || '') + '">') + '</div>' +
@@ -1520,36 +1509,38 @@ function apriRiempi(c, dataProposta, schedaW) {
   var r = rie(c)
   var w = apriFinestra('Riempi automaticamente · ' + c.numero, { centro: true, piccola: true })
   var inizio = dataProposta || c.data_inizio || C.spostaLavorativi(ST.cal, C.oggiIso(), 0)
-  var ore = r.orePreventivo
-  w.corpo.innerHTML = '<p>Ore da coprire: <strong>' + fOre(ore) + '</strong> (preventivo).</p><div class="campi">' +
+  var ore = r.orePreventivo             // v7: solo la squadra (capitoli non esterni)
+  var oreEst = r.esterni.orePreventivo
+  w.corpo.innerHTML = '<p>Ore da coprire: <strong>' + fOre(ore) + '</strong> (preventivo della squadra' + (oreEst > 0 ? '; le ' + fOre(oreEst) + ' 👷 Esterni sono a parte' : '') + ').</p><div class="campi">' +
     campo('Data inizio', '<input id="ri-data" type="date" value="' + esc(inizio) + '">') + '</div>' +
     '<h3>Persone</h3><p><label><input type="radio" name="ri-modo" value="nomi" checked> Con nome</label> &nbsp; <label><input type="radio" name="ri-modo" value="numero"> Solo il numero (nomi da decidere)</label></p>' +
     '<div id="ri-nomi">' + ST.persone.map(function (p) { return '<p><label><input type="checkbox" value="' + p.id + '"> ' + esc(p.nome) + '</label></p>' }).join('') +
-    (ST.esterni.length ? '<p class="aiuto" id="ri-nota-esterni">👷 Gli Esterni (' + ST.esterni.length + ') non sono in questo elenco: «Riempi» usa solo i Dipendenti. Un Esterno si assegna a mano, cliccando la sua cella nella vista Persone. ' +
-      '<button type="button" class="piccolo" id="ri-assegna-esterno">👷 Assegna a…</button></p>' : '') + '</div>' +
+    (ST.esterni.length || oreEst > 0 ? '<div class="nota-esterni" id="ri-nota-esterni"><p class="aiuto">👷 Gli Esterni' + (ST.esterni.length ? ' (' + ST.esterni.length + ')' : '') + ' non sono in questo elenco: «Riempi» usa solo i Dipendenti e copre solo le ore della squadra. ' +
+      'Un Esterno si assegna con «Assegna a…» qui accanto' + (ST.esterni.length ? ', o a mano cliccando la sua cella nella vista Persone' : '') + '.</p>' +
+      '<button type="button" class="grande" id="ri-assegna-esterni">👷 Assegna a…</button></div>' : '') + '</div>' +
     '<div id="ri-numero" hidden>' + campo('Quante persone', '<input id="ri-quante" inputmode="numeric" value="' + (c.persone_previste || 2) + '">', 'persone') + '</div>' +
     '<p class="esito attenzione" id="ri-sostituisce" hidden></p>' +
     '<div class="riga-bottoni"><button type="button" class="primario" id="ri-vai">Riempi</button><button type="button" id="ri-annulla">Annulla</button></div><div id="ri-esito"></div>'
   var q = function (s) { return w.corpo.querySelector(s) }
   // Le assegnazioni PRIMA della data d'inizio restano (lavoro già fatto o già deciso);
   // da quella data in poi si rifà tutto e si coprono solo le ore che mancano.
-  // v7: le righe degli Esterni restano TUTTE e non coprono ore della squadra (ore = solo squadra).
+  // v7: le righe degli Esterni restano TUTTE (anche dopo la data) e non contano nelle ore della squadra
   function divisione(data) {
     var tutte = ST.assPer[c.id] || []
-    var est = C.soloEsterni(tutte, ST.esterniSet)
     var squadra = C.senzaEsterni(tutte, ST.esterniSet)
+    var esterni = C.soloEsterni(tutte, ST.esterniSet)
     var tenute = squadra.filter(function (a) { return a.data < data })
-    return { tenute: tenute.concat(est), sostituite: squadra.length - tenute.length, nTenute: tenute.length, oreTenute: C.sommaOre(tenute), nEsterni: est.length,
-      daCoprire: Math.round((ore - C.sommaOre(tenute)) * 1000) / 1000 }
+    return { tenute: tenute, esterni: esterni, sostituite: squadra.length - tenute.length, daCoprire: Math.round((ore - C.sommaOre(tenute)) * 1000) / 1000 }
   }
   function aggiornaNota() {
     var d = q('#ri-data').value, el = q('#ri-sostituisce')
     if (!d) { el.hidden = true; return }
     var dv = divisione(d)
-    el.hidden = !dv.sostituite && !dv.nTenute && !dv.nEsterni
+    el.hidden = !dv.sostituite && !dv.tenute.length
     el.textContent = (dv.sostituite ? 'Le ' + dv.sostituite + ' assegnazioni di ' + c.numero + ' dal ' + gAnno(d) + ' in poi vengono sostituite. ' : '') +
-      (dv.nTenute ? 'Le ' + dv.nTenute + ' prima di questa data restano (' + fOre(dv.oreTenute) + '): si coprono le ' + fOre(dv.daCoprire) + ' che mancano. ' : '') +
-      (dv.nEsterni ? 'Le ' + dv.nEsterni + ' righe degli Esterni restano come sono.' : '')
+      (dv.tenute.length ? 'Le ' + dv.tenute.length + ' prima di questa data restano (' + fOre(C.sommaOre(dv.tenute)) + '): si coprono le ' + fOre(dv.daCoprire) + ' che mancano.' : '') +
+      (dv.esterni.length ? ' Le ' + dv.esterni.length + ' righe degli Esterni restano come sono.' : '')
+    el.hidden = el.hidden && !dv.esterni.length
   }
   q('#ri-data').addEventListener('change', aggiornaNota)
   aggiornaNota()
@@ -1557,7 +1548,7 @@ function apriRiempi(c, dataProposta, schedaW) {
     x.addEventListener('change', function () { var nomi = q('[name="ri-modo"]:checked').value === 'nomi'; q('#ri-nomi').hidden = !nomi; q('#ri-numero').hidden = nomi })
   })
   q('#ri-annulla').addEventListener('click', w.chiudi)
-  if (q('#ri-assegna-esterno')) q('#ri-assegna-esterno').addEventListener('click', function () { w.chiudi(); apriAssegnaEsterno(c, schedaW) })
+  if (q('#ri-assegna-esterni')) q('#ri-assegna-esterni').addEventListener('click', function () { w.chiudi(); apriAssegnaEsterni(c, schedaW) })
   q('#ri-vai').addEventListener('click', function () {
     esegui(async function () {
       var es = q('#ri-esito')
@@ -1597,10 +1588,107 @@ function apriRiempi(c, dataProposta, schedaW) {
       }
       if (piano.oreNonCoperte > 0) { es.innerHTML = '<div class="esito ko">Non sono riuscito a coprire ' + fOre(piano.oreNonCoperte) + ' (troppe assenze o chiusure?).</div>'; return }
       w.chiudi()
-      await applicaPiano(c.id, dv.tenute.concat(piano.assegnazioni), c.numero + ': pianificata da ' + C.fmtGiorno(piano.assegnazioni.map(function (a) { return a.data }).sort()[0]) + ' a ' + C.fmtGiorno(piano.fine), { ripianificato: true })
+      await applicaPiano(c.id, dv.esterni.concat(dv.tenute, piano.assegnazioni), c.numero + ': pianificata da ' + C.fmtGiorno(piano.assegnazioni.map(function (a) { return a.data }).sort()[0]) + ' a ' + C.fmtGiorno(piano.fine), { ripianificato: true })
       if (schedaW && _finestre.indexOf(schedaW) >= 0) riapriScheda(schedaW)
     })
   })
+}
+
+// ── v7 · «👷 Assegna a…»: le ore Esterni a un Esterno, le celle si riempiono da sole ──
+// Si sceglie l'Esterno (nome + ditta), la data d'inizio e i giorni (o le ore al giorno): proposta dalle ore
+// Esterni ancora da assegnare. Giorni: lun-ven senza festivi; le chiusure aziendali NON si saltano (gli
+// Esterni non hanno le nostre ferie): solo un avviso. Se l'Esterno ha già lavoro in quei giorni: avviso e
+// scelta («aggiungi lo stesso» / «salta quei giorni»), mai sovrascrivere. Prima di creare: riepilogo.
+function apriAssegnaEsterni(c, schedaW) {
+  if (!conPL03()) { mostraErrore('«Assegna a…» non è ancora disponibile: manca l\'aggiornamento del database (PL_03). Niente è stato creato. Il resto del Calendario funziona.'); return }
+  if (!ST.esterni.length) { mostraErrore('Nessun Esterno attivo in Anagrafiche. Un Esterno si aggiunge in Anagrafiche › Persone (Rapporto = Esterno, con la ditta). Niente è stato creato.'); return }
+  var r = rie(c), e = r.esterni
+  var oggi = C.oggiIso()
+  var daAssegnare = e.residue > 1e-9 ? Math.round(e.residue * 100) / 100 : 0
+  // data proposta: dopo gli Esterni già messi, se no dopo la squadra, se no l'inizio previsto (mai prima di oggi)
+  var base = (e.fine && C.aggiungiGiorni(e.fine, 1)) || (r.fine && C.aggiungiGiorni(r.fine, 1)) || c.data_inizio || oggi
+  if (base < oggi) base = oggi
+  var dal0 = C.primoGiornoEsterno(ST.cal, base)
+  var giornata = C.oreBase(ST.cal, dal0) || 8
+  var giorni0 = daAssegnare ? Math.max(1, Math.ceil(daAssegnare / giornata - 1e-9)) : 1
+  var stato = { persona: ST.esterni.length === 1 ? ST.esterni[0].id : null, conflitti: null, piano: null }
+  var w = apriFinestra('👷 Assegna a… · ' + c.numero, { centro: true, piccola: true })
+  w.corpo.innerHTML = '<p>Ore 👷 Esterni di <strong>' + esc(c.numero + ' ' + c.nome) + '</strong>: ' +
+    (e.nCapitoli ? fOre(e.orePreventivo) + ' · già assegnate ' + fOre(e.oreAssegnate) + ' · <strong>da assegnare ' + fOre(daAssegnare) + '</strong>'
+      : '<strong>nessun capitolo 👷 Esterni</strong>: scrivi tu le ore.') + '</p>' +
+    '<h3>Esterno</h3><div class="lista-esterni" role="radiogroup" aria-label="Esterno">' + ST.esterni.map(function (x) {
+      return '<label class="voce-esterno"><input type="radio" name="ae-persona" value="' + x.id + '"' + (x.id === stato.persona ? ' checked' : '') + '>' +
+        '<span><strong>' + esc(x.nome) + '</strong> <span class="etichetta-esterno">' + esc(x.etichetta) + '</span></span></label>'
+    }).join('') + '</div>' +
+    '<div class="campi">' + campo('Data inizio', '<input id="ae-dal" type="date" value="' + esc(dal0) + '">') +
+    campo('Ore da assegnare', '<input id="ae-ore" inputmode="decimal" value="' + esc(daAssegnare ? f(daAssegnare, 2) : '') + '" placeholder="es. 21,5">', 'h') + '</div>' +
+    '<h3>Come</h3><div class="ae-modi">' +
+    '<label class="off-scelta"><input type="radio" name="ae-modo" value="giorni" checked> In <input id="ae-giorni" inputmode="numeric" value="' + giorni0 + '" aria-label="Numero di giorni"> giorni (ore divise uguali)</label>' +
+    '<label class="off-scelta"><input type="radio" name="ae-modo" value="oregiorno"> <input id="ae-oregiorno" inputmode="decimal" value="' + esc(f(giornata, 2)) + '" aria-label="Ore al giorno"> ore al giorno</label></div>' +
+    '<div id="ae-anteprima" class="ae-anteprima" aria-live="polite"></div>' +
+    '<div id="ae-conflitti" class="esito attenzione" hidden></div>' +
+    '<div class="riga-bottoni"><button type="button" class="primario grande" id="ae-vai">✔ Continua…</button><button type="button" class="grande" id="ae-annulla">Annulla</button></div><div id="ae-esito"></div>'
+  var q = function (s) { return w.corpo.querySelector(s) }
+  function esterno() { return ST.esterni.find(function (x) { return x.id === stato.persona }) || null }
+  function calcola() {
+    var modo = q('[name="ae-modo"]:checked').value
+    var p = {
+      cal: ST.cal, dal: q('#ae-dal').value, ore: C.leggiOre(q('#ae-ore').value), persona_id: stato.persona, commessa_id: c.id,
+      assTutte: ST.dati.assegnazioni, conflitti: stato.conflitti || 'aggiungi', fineRapporto: esterno() && esterno().data_fine_rapporto
+    }
+    if (modo === 'oregiorno') p.oreGiorno = C.leggiOre(q('#ae-oregiorno').value); else p.giorni = C.leggiNumero(q('#ae-giorni').value)
+    var an = q('#ae-anteprima'), cf = q('#ae-conflitti')
+    if (!stato.persona) { stato.piano = null; an.innerHTML = '<p class="aiuto">Scegli l\'Esterno.</p>'; cf.hidden = true; return }
+    var pe = C.pianoEsterno(p)
+    stato.piano = pe.ok ? pe : null
+    if (!pe.ok) { an.innerHTML = '<div class="esito ko">' + esc(pe.messaggio) + '</div>'; cf.hidden = true; return }
+    var h = '<p><strong>' + pe.giorni + (pe.giorni === 1 ? ' giorno' : ' giorni') + ', ' + fOre(pe.ore) + '</strong>: ' +
+      pe.assegnazioni.map(function (a) { return C.fmtGiorno(a.data) + ' ' + fOre(a.ore) }).join(' · ') + '</p>'
+    if (pe.festiviSaltati.length) h += '<p class="aiuto">ℹ️ Festivo saltato: ' + pe.festiviSaltati.map(function (x) { return C.fmtGiorno(x.data) + ' ' + x.nome }).join(', ') + '.</p>'
+    if (pe.inChiusura.length) h += '<div class="esito attenzione">⚠️ ' + pe.inChiusura.length + (pe.inChiusura.length === 1 ? ' giorno è' : ' giorni sono') + ' dentro la chiusura aziendale (' + pe.inChiusura.map(function (x) { return C.fmtGiorno(x.data) }).join(', ') + '). Gli Esterni non hanno le nostre ferie: i giorni restano. Solo avviso.</div>'
+    if (pe.oltreFineRapporto.length) h += '<div class="esito attenzione">⚠️ Dopo la fine del rapporto (' + gAnno(esterno().data_fine_rapporto) + '): ' + pe.oltreFineRapporto.map(C.fmtGiorno).join(', ') + '.</div>'
+    an.innerHTML = h
+    // giorni in cui l'Esterno ha già lavoro: avviso e scelta (mai sovrascrivere)
+    if (pe.occupati.length) {
+      cf.hidden = false
+      cf.innerHTML = '⚠️ ' + esc(esterno().nome) + ' ha già lavoro ' + pe.occupati.map(function (x) { return C.fmtGiorno(x.data) + ' (' + fOre(x.ore) + ')' }).join(', ') + '. Cosa vuoi fare?' +
+        '<label class="off-scelta"><input type="radio" name="ae-conflitti" value="aggiungi"' + (stato.conflitti === 'aggiungi' ? ' checked' : '') + '> ➕ Aggiungi lo stesso (il lavoro di prima resta)</label>' +
+        '<label class="off-scelta"><input type="radio" name="ae-conflitti" value="salta"' + (stato.conflitti === 'salta' ? ' checked' : '') + '> ⏭️ Salta quei giorni (usa i giorni liberi dopo)</label>'
+      cf.querySelectorAll('[name="ae-conflitti"]').forEach(function (x) { x.addEventListener('change', function () { stato.conflitti = x.value; calcola() }) })
+    } else { cf.hidden = true; cf.innerHTML = '' }
+  }
+  w.corpo.querySelectorAll('[name="ae-persona"]').forEach(function (x) { x.addEventListener('change', function () { stato.persona = x.value; stato.conflitti = null; calcola() }) })
+  w.corpo.querySelectorAll('[name="ae-modo"]').forEach(function (x) { x.addEventListener('change', calcola) })
+  ;['#ae-dal', '#ae-ore', '#ae-giorni', '#ae-oregiorno'].forEach(function (s) { q(s).addEventListener('input', calcola); q(s).addEventListener('change', calcola) })
+  q('#ae-giorni').addEventListener('focus', function () { q('[name="ae-modo"][value="giorni"]').checked = true; calcola() })
+  q('#ae-oregiorno').addEventListener('focus', function () { q('[name="ae-modo"][value="oregiorno"]').checked = true; calcola() })
+  q('#ae-annulla').addEventListener('click', w.chiudi)
+  q('#ae-vai').addEventListener('click', function () {
+    esegui(async function () {
+      var es = q('#ae-esito')
+      calcola()
+      if (!stato.persona) { es.innerHTML = '<div class="esito ko">Scegli l\'Esterno.</div>'; return }
+      var pe = stato.piano
+      if (!pe) { es.innerHTML = '<div class="esito ko">Controlla data, ore e giorni.</div>'; return }
+      if (pe.occupati.length && !stato.conflitti) { es.innerHTML = '<div class="esito ko">L\'Esterno ha già lavoro in quei giorni: scegli sopra «Aggiungi lo stesso» o «Salta quei giorni».</div>'; return }
+      es.innerHTML = ''
+      var x = esterno()
+      var o = ST.dati.operai.find(function (k) { return k.id === x.id })
+      var testo = '<strong>' + esc(x.nome) + ' (' + esc(C.dittaDi(o, ST.dati.ditte)) + ')</strong>, ' + pe.giorni + (pe.giorni === 1 ? ' giorno' : ' giorni') + ' dal ' + gAnno(pe.dal) +
+        (pe.al !== pe.dal ? ' al ' + gAnno(pe.al) : '') + ', <strong>' + fOre(pe.ore) + '</strong> su ' + esc(c.numero + ' ' + c.nome) + '.<br>' +
+        pe.assegnazioni.map(function (a) { return C.fmtGiorno(a.data) + ' ' + fOre(a.ore) }).join(' · ') +
+        (pe.inChiusura.length ? '<br>⚠️ ' + pe.inChiusura.length + ' giorni dentro la chiusura aziendale (restano).' : '') +
+        (stato.conflitti === 'aggiungi' && pe.occupati.length ? '<br>➕ Nei giorni già occupati si aggiunge: il lavoro di prima resta.' : '') +
+        (stato.conflitti === 'salta' && pe.occupati.length ? '<br>⏭️ Saltati i giorni già occupati: ' + pe.occupati.map(function (k) { return C.fmtGiorno(k.data) }).join(', ') + '.' : '')
+      if (!await conferma(testo, { si: 'Assegna', titolo: '👷 Assegna a ' + x.nome })) return
+      await D.inserisci('pl_assegnazioni', pe.assegnazioni.map(rigaAss))
+      w.chiudi()
+      await ricarica(['assegnazioni'])
+      toast(x.nome + ': ' + pe.giorni + (pe.giorni === 1 ? ' giorno' : ' giorni') + ' dal ' + C.fmtGiorno(pe.dal) + ', ' + fOre(pe.ore) + ' su ' + c.numero)
+      if (schedaW && _finestre.indexOf(schedaW) >= 0) riapriScheda(schedaW)
+    })
+  })
+  calcola()
 }
 
 // Riempi: il periodo attraversa una chiusura → le 3 scelte. Restituisce
@@ -1778,7 +1866,9 @@ async function azioneAvviso(a, z) {
     } else if (z.id === 'lavora_durante') {
       var scelte = await scegliPersone('Chi lavora durante la chiusura?', 'Le ore lavorate in chiusura avranno la nota «ferie da recuperare».')
       if (!scelte || !scelte.length) return
-      var piano = C.pianoLavoraDurante({ assCommessa: ass, chiusura: ch, personeScelte: scelte, cal: ST.cal, commessa: c, viaggioIncluso: viaggioIncluso(), assenze: ST.dati.assenze, esterni: ST.esterniSet })
+      // v7: le righe degli Esterni restano come sono (le loro ore non le coprono i Dipendenti)
+      var piano = C.pianoLavoraDurante({ assCommessa: C.senzaEsterni(ass, ST.esterniSet), chiusura: ch, personeScelte: scelte, cal: ST.cal, commessa: c, viaggioIncluso: viaggioIncluso(), assenze: ST.dati.assenze, esterni: ST.esterniSet })
+        .concat(C.soloEsterni(ass, ST.esterniSet))
       var inCh = piano.filter(function (x) { return x.nota === 'ferie da recuperare' })
       if (!await conferma(esc(scelte.map(function (s) { return ST.nomi[s] }).join(', ')) + ' lavora su ' + esc(c.numero) + ' durante la chiusura: ' + inCh.length + ' giornate, ' + fOre(C.sommaOre(inCh)) + ' (ferie da recuperare). Confermi?')) return
       await applicaPiano(c.id, piano, 'Piano aggiornato: ferie da recuperare segnate')
@@ -1794,7 +1884,7 @@ async function azioneAvviso(a, z) {
       await D.inserisci('pl_assegnazioni', righe); await ricarica(['assegnazioni']); toast('Ore libere al Magazzino')
     } else if (z.id === 'riparazione') {
       var rip = ST.perId[z.commessa_id]
-      var resto = C.sommaOre(C.capitoliSquadra(ST.capPer[rip.id] || []))
+      var resto = C.oreSquadra(ST.capPer[rip.id] || [])
       if (!await conferma('Mettere la riparazione ' + esc(rip.numero + ' ' + rip.nome) + ' (' + fOre(resto) + ') nelle ore libere di ' + C.fmtGiorno(ug.data) + '?')) return
       var nuove = []
       liberi.forEach(function (p) {

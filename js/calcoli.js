@@ -324,89 +324,44 @@
     return { assegnazioni: out, fine: fine, oreNonCoperte: Math.max(0, Math.round(resto * 1000) / 1000) }
   }
 
-  // ── v7: «Assegna a…» un Esterno (lattoniere): le celle si riempiono da sole ──
-  // p: { persona_id, oreTotali, dal, al (facoltativo), cal, commessa, viaggioIncluso, assenze, altreAssegnazioni }
-  //   senza «al»: giorni pieni da «dal» (ore del cantiere di quel giorno) finché le ore sono coperte (come Riempi);
-  //   con «al»: le ore divise in mezz'ore sui giorni lavorativi fra dal e al. Un giorno oltre le ore del cantiere
-  //   NON si blocca: si avvisa (oltre: [{ data, ore, capacita }]).
-  // Ritorna { assegnazioni, giorni, fine, oreNonCoperte, oltre }
-  function pianoEsterno(p) {
-    var ore = Math.round((Number(p.oreTotali) || 0) * 1000) / 1000
-    var vuoto = { assegnazioni: [], giorni: 0, fine: null, oreNonCoperte: Math.max(0, ore), oltre: [] }
-    if (!(ore > 0) || !p.persona_id || !p.dal) return vuoto
-    if (!p.al) {
-      var r = riempiAutomatico({ oreTotali: ore, dataInizio: p.dal, persone: [{ persona_id: p.persona_id }], cal: p.cal, commessa: p.commessa,
-        assenze: p.assenze, viaggioIncluso: p.viaggioIncluso, altreAssegnazioni: p.altreAssegnazioni })
-      return { assegnazioni: r.assegnazioni, giorni: r.assegnazioni.length, fine: r.fine, oreNonCoperte: r.oreNonCoperte, oltre: [] }
-    }
-    if (p.al < p.dal) return vuoto
-    var giorni = []
-    for (var d = p.dal, giri = 0; d <= p.al && giri < 800; d = aggiungiGiorni(d, 1), giri++) {
-      if (oreCantiere(p.cal, d, p.commessa, p.viaggioIncluso) > 0 && !assenzaDi(p.assenze, p.persona_id, d)) giorni.push(d)
-    }
-    if (!giorni.length) return vuoto
-    var occupate = {}
-    ;(p.altreAssegnazioni || []).forEach(function (a) {
-      if (a.persona_id !== p.persona_id) return
-      occupate[a.data] = Math.max(occupate[a.data] || 0, a.posizione || 1)
-    })
-    var quote = dividiInMezzore(ore, giorni.length)
-    var out = [], oltre = []
-    giorni.forEach(function (g, i) {
-      if (!(quote[i] > 0)) return
-      var cap = oreCantiere(p.cal, g, p.commessa, p.viaggioIncluso)
-      if (quote[i] > cap + 1e-9) oltre.push({ data: g, ore: quote[i], capacita: cap })
-      out.push({ data: g, persona_id: p.persona_id, segnaposto: null, commessa_id: p.commessa && p.commessa.id, ore: Math.round(quote[i] * 1000) / 1000, posizione: (occupate[g] || 0) + 1 })
-    })
-    return { assegnazioni: out, giorni: out.length, fine: out.length ? out[out.length - 1].data : null, oreNonCoperte: 0, oltre: oltre }
-  }
-
   // ── Riepilogo di una commessa (la durata si legge dalle assegnazioni) ────
   function sommaOre(l) { return Math.round(l.reduce(function (s, x) { return s + Number(x.ore || 0) }, 0) * 1000) / 1000 }
 
-  // ── v7: capitoli degli Esterni (lattoniere…) ──────────────────────────────
-  // Un capitolo è degli Esterni se il nome finisce con «(esterno - solo tempistica)» (lo mette «Carica offerta
-  // Excel» o «Aggiungi capitolo» con «Chi: Esterni»). Le sue ore NON sono ore della squadra: non entrano in
-  // «Ore preventivo», «Riempi», «Ricalcola», residuo della squadra. Si coprono solo con righe degli Esterni.
-  var SCRITTA_ESTERNO = 'esterno - solo tempistica'
-  var RE_CAP_ESTERNO = /\(\s*esterno\s*-\s*solo\s+tempistica\s*\)\s*$/i
-  function eCapitoloEsterno(cap) { return !!cap && RE_CAP_ESTERNO.test(String(cap.nome || '')) }
-  function nomeConEsterno(nome) { var n = String(nome || '').trim().replace(RE_CAP_ESTERNO, '').trim(); return n + ' (' + SCRITTA_ESTERNO + ')' }
-  function nomeSenzaEsterno(nome) { return String(nome || '').replace(RE_CAP_ESTERNO, '').trim() }
-  function capitoliSquadra(caps) { return (caps || []).filter(function (c) { return !eCapitoloEsterno(c) }) }
-  function capitoliEsterni(caps) { return (caps || []).filter(eCapitoloEsterno) }
-  function soloEsterni(ass, esterni) {
-    if (!esterni) return []
-    return (ass || []).filter(function (a) { return a.persona_id && esterni[a.persona_id] })
-  }
-
   // assTutte: tutte le assegnazioni (servono per le ore libere dell'ultimo giorno:
   // se una persona ha già un'altra commessa quel giorno, quelle ore non sono libere)
-  // v7: esterni = insiemeEsterni. Ore preventivo, assegnate, residue, giorni-persona e ultimo giorno sono
-  // della SQUADRA (capitoli non esterni, righe dei Dipendenti e dei segnaposto). Gli Esterni a parte:
-  // oreEsterni (capitoli esterni), oreEsterniAssegnate, residueEsterni. Inizio e fine = tutto il cantiere.
+  // v7 (PL_03): capitoli con esterno = true sono ore degli Esterni (gruppo «👷 Esterni»): fuori dalle
+  // ore della squadra (preventivo, Riempi, Ricalcola, margini, avvisi). esterni = insiemeEsterni(operai):
+  // se c'è, le assegnazioni degli Esterni contano SOLO contro i capitoli Esterni (r.esterni) e non entrano
+  // nei numeri della squadra (ore pianificate, giorni-persona del viaggio, ultimo giorno, date).
+  // Senza `esterni` le assegnazioni contano tutte per la squadra (come fino alla v6).
   function riepilogoCommessa(commessa, capitoli, assTutte, cal, viaggioIncluso, esterni) {
     var tutti = (capitoli || []).filter(function (c) { return c.commessa_id === commessa.id || c.commessa_id === undefined })
-    var caps = capitoliSquadra(tutti)
+    var caps = capitoliSquadra(tutti), capsE = capitoliEsterni(tutti)
     var assC = (assTutte || []).filter(function (a) { return a.commessa_id === commessa.id })
     var ass = senzaEsterni(assC, esterni)
-    var assEst = soloEsterni(assC, esterni)
+    var assE = soloEsterni(assC, esterni)
     var orePrev = sommaOre(caps)
     var oreAperto = sommaOre(caps.filter(function (c) { return c.ubicazione !== 'Al coperto' }))
     var oreAss = sommaOre(ass)
-    var oreEst = sommaOre(capitoliEsterni(tutti)), oreEstAss = sommaOre(assEst)
     var date = Array.from(new Set(ass.map(function (a) { return a.data }))).sort()
-    var tutteDate = Array.from(new Set(assC.map(function (a) { return a.data }))).sort()
+    var dateTutte = Array.from(new Set(assC.map(function (a) { return a.data }))).sort()
     var giorniPersona = new Set(ass.map(function (a) { return a.data + '|' + chiavePersona(a) })).size
+    var dateE = Array.from(new Set(assE.map(function (a) { return a.data }))).sort()
+    var orePrevE = sommaOre(capsE), oreAssE = sommaOre(assE)
     var r = {
       orePreventivo: orePrev, oreAssegnate: oreAss,
       residue: Math.round((orePrev - oreAss) * 1000) / 1000,
-      oreEsterni: oreEst, oreEsterniAssegnate: oreEstAss,
-      residueEsterni: Math.round((oreEst - oreEstAss) * 1000) / 1000,
       quotaAperto: orePrev > 0 ? oreAperto / orePrev : 0,
-      inizio: tutteDate[0] || null, fine: tutteDate[tutteDate.length - 1] || null,
-      fineSquadra: date[date.length - 1] || null,
-      date: date, giorni: date.length, giorniPersona: giorniPersona, ultimoGiorno: null
+      inizio: date[0] || null, fine: date[date.length - 1] || null,
+      date: date, giorni: date.length, giorniPersona: giorniPersona, ultimoGiorno: null,
+      // tutta la commessa (squadra + Esterni): per ordinare le righe e per «nessuno in cantiere»
+      dateTutte: dateTutte, inizioTutte: dateTutte[0] || null, fineTutte: dateTutte[dateTutte.length - 1] || null,
+      nCapitoliSquadra: caps.length,
+      esterni: {
+        nCapitoli: capsE.length, orePreventivo: orePrevE, oreAssegnate: oreAssE,
+        residue: Math.round((orePrevE - oreAssE) * 1000) / 1000,
+        inizio: dateE[0] || null, fine: dateE[dateE.length - 1] || null, giorni: dateE.length
+      }
     }
     // Di cui viaggio: ogni giorno-persona è un viaggio di andata e ritorno
     var v = Number(commessa.viaggio_min_andata || 0)
@@ -414,8 +369,8 @@
     r.oreInCantiere = Math.round((orePrev - r.oreViaggio) * 100) / 100
     r.pctViaggio = orePrev > 0 ? r.oreViaggio / orePrev * 100 : 0
 
-    if (r.fineSquadra) {
-      var g = r.fineSquadra
+    if (r.fine) {
+      var g = r.fine
       var cap = oreCantiere(cal, g, commessa, viaggioIncluso)
       var perPersona = {}
       ass.filter(function (a) { return a.data === g }).forEach(function (a) {
@@ -689,7 +644,9 @@
   // «Ricalcola con le ore del nuovo periodo»: rifà Riempi con le stesse persone
   // (in ordine di comparsa) e la data d'inizio di adesso. Le modifiche a mano si perdono.
   // v6: le righe degli Esterni (p.esterni) restano com'erano (sono messe a mano); Riempi usa solo gli altri.
-  // v7: le ore degli Esterni non sono più tolte da oreTotali (oreTotali è già solo della squadra).
+  // v7: p.oreTotali sono le ore della SQUADRA (capitoli non esterni): le ore degli Esterni contano contro i
+  // capitoli Esterni e NON si tolgono più da quelle da coprire (i Dipendenti non coprono ore esterne, e
+  // gli Esterni non coprono ore della squadra).
   function pianoRicalcola(assCommessa, p) {
     if (p.esterni) {
       var est = assCommessa.filter(function (a) { return a.persona_id && p.esterni[a.persona_id] })
@@ -699,7 +656,6 @@
         var q = {}
         Object.keys(p).forEach(function (k) { q[k] = p[k] })
         q.esterni = null
-        // v7: oreTotali = ore della SQUADRA (i capitoli degli Esterni sono già fuori): niente da togliere
         q.oreTotali = Math.max(0, Math.round(Number(p.oreTotali) * 1000) / 1000)
         if (!altre.length) return { assegnazioni: tenute, fine: tenute.map(function (a) { return a.data }).sort().pop() || null, oreNonCoperte: q.oreTotali, soloEsterni: true }
         var r = pianoRicalcola(altre, q)
@@ -773,9 +729,12 @@
     return Math.round(ore * 100) / 100
   }
   function opzioniPocheOre(p) {
-    // p: { commessa, assTutte, cal, commesse, viaggioIncluso, maxSettimanale }
+    // p: { commessa, assTutte, cal, commesse, viaggioIncluso, maxSettimanale, esterni }
+    // v7: solo la squadra; le righe degli Esterni restano come sono (anche nell'opzione B)
     var c = p.commessa
-    var ass = p.assTutte.filter(function (a) { return a.commessa_id === c.id })
+    var assC = p.assTutte.filter(function (a) { return a.commessa_id === c.id })
+    var ass = senzaEsterni(assC, p.esterni)
+    var righeEsterni = soloEsterni(assC, p.esterni).map(function (a) { return copia(a) })
     var rie = riepilogoCommessa(c, [], p.assTutte, p.cal, p.viaggioIncluso, p.esterni)
     if (!rie.ultimoGiorno) return null
     var ug = rie.ultimoGiorno
@@ -806,6 +765,7 @@
       if (daAggiungere > 1e-9) nuova.push({ data: ug.data, persona_id: pp.persona_id, segnaposto: pp.segnaposto, commessa_id: c.id, ore: daAggiungere, posizione: 1 })
     })
     // settimana più carica dopo la modifica, fra le persone vere
+    nuova = nuova.concat(righeEsterni)
     var altreAss = p.assTutte.filter(function (a) { return a.commessa_id !== c.id }).concat(nuova)
     var settimanaMax = 0
     ug.persone.forEach(function (pp) {
@@ -990,6 +950,91 @@
     if (!esterni) return ass || []
     return (ass || []).filter(function (a) { return !(a.persona_id && esterni[a.persona_id]) })
   }
+  // v7: solo le assegnazioni degli Esterni
+  function soloEsterni(ass, esterni) {
+    if (!esterni) return []
+    return (ass || []).filter(function (a) { return !!(a.persona_id && esterni[a.persona_id]) })
+  }
+  // v7 (PL_03): capitoli della squadra / degli Esterni (pl_capitoli.esterno). Senza PL_03 la colonna
+  // non c'è: tutti della squadra, come prima.
+  function capitoliSquadra(caps) { return (caps || []).filter(function (c) { return c.esterno !== true }) }
+  function capitoliEsterni(caps) { return (caps || []).filter(function (c) { return c.esterno === true }) }
+  function oreSquadra(caps) { return sommaOre(capitoliSquadra(caps)) }
+  function oreEsterni(caps) { return sommaOre(capitoliEsterni(caps)) }
+
+  // ── «Assegna a…» un Esterno (v7) ──────────────────────────────────────────
+  // Giorni di lavoro di un Esterno: lun-ven senza i festivi attivi. Le chiusure aziendali NON si
+  // saltano (gli Esterni non hanno le nostre ferie): si dicono solo con un avviso.
+  function giornoEsterno(cal, iso) {
+    if (giornoSettimana(iso) >= 6) return false
+    var f = festivo(cal, iso)
+    return !(f && f.attivo)
+  }
+  // Primo giorno da Esterno a partire da iso (iso compreso)
+  function primoGiornoEsterno(cal, iso) {
+    var d = iso, g = 0
+    while (!giornoEsterno(cal, d) && g++ < 30) d = aggiungiGiorni(d, 1)
+    return d
+  }
+  // p: { cal, dal, ore, giorni (numero) OPPURE oreGiorno, persona_id, commessa_id,
+  //      assTutte (tutte le assegnazioni, per i giorni già occupati), conflitti: 'aggiungi' | 'salta',
+  //      fineRapporto (iso o null) }
+  // Restituisce { ok, messaggio } oppure { ok: true, assegnazioni, ore, giorni, dal, al, occupati:[{data, ore}],
+  //   inChiusura:[{data, chiusura}], oltreFineRapporto:[iso], festiviSaltati:[{data, nome}] }.
+  // Niente si sovrascrive: «aggiungi» mette una riga in più nel giorno (posizione dopo le altre),
+  // «salta» usa il giorno libero successivo.
+  function pianoEsterno(p) {
+    var ore = Math.round(Number(p.ore) * 1000) / 1000
+    if (!(ore > 0)) return { ok: false, messaggio: 'Scrivi le ore da assegnare (più di 0).' }
+    if (!p.persona_id) return { ok: false, messaggio: 'Scegli l\'Esterno.' }
+    if (!p.dal) return { ok: false, messaggio: 'Scegli la data di inizio.' }
+    var quote
+    if (p.oreGiorno != null && p.oreGiorno !== '') {
+      var g = Math.round(Number(p.oreGiorno) * 1000) / 1000
+      if (!(g > 0) || g > 24) return { ok: false, messaggio: 'Ore al giorno fra 0.5 e 24.' }
+      var n = Math.ceil(ore / g - 1e-9)
+      if (n > 250) return { ok: false, messaggio: 'Troppi giorni (' + n + '): controlla le ore.' }
+      quote = []
+      var resto = ore
+      for (var i = 0; i < n; i++) { var q = Math.min(g, resto); quote.push(Math.round(q * 1000) / 1000); resto = Math.round((resto - q) * 1000) / 1000 }
+    } else {
+      var ng = Math.round(Number(p.giorni))
+      if (!(ng >= 1) || ng > 250) return { ok: false, messaggio: 'Giorni fra 1 e 250.' }
+      if (ore / ng > 24 + 1e-9) return { ok: false, messaggio: 'In ' + ng + (ng === 1 ? ' giorno' : ' giorni') + ' sarebbero più di 24 h al giorno: metti più giorni.' }
+      quote = dividiInMezzore(ore, ng).filter(function (x) { return x > 1e-9 })
+    }
+    var occ = {}, pos = {}
+    ;(p.assTutte || []).forEach(function (a) {
+      if (a.persona_id !== p.persona_id) return
+      occ[a.data] = (occ[a.data] || 0) + Number(a.ore || 0)
+      pos[a.data] = Math.max(pos[a.data] || 0, a.posizione || 1)
+    })
+    var out = [], occupati = [], inChiusura = [], oltre = [], festiviSaltati = []
+    var d = p.dal, giri = 0
+    while (out.length < quote.length && giri++ < 2000) {
+      if (giornoSettimana(d) <= 5) {
+        var f = festivo(p.cal, d)
+        if (f && f.attivo) festiviSaltati.push({ data: d, nome: f.nome })
+      }
+      if (giornoEsterno(p.cal, d)) {
+        var gia = occ[d] || 0
+        if (gia > 0) occupati.push({ data: d, ore: Math.round(gia * 1000) / 1000 })
+        if (!(gia > 0 && p.conflitti === 'salta')) {
+          var ch = chiusuraDi(p.cal, d)
+          if (ch) inChiusura.push({ data: d, chiusura: ch })
+          if (p.fineRapporto && d > p.fineRapporto) oltre.push(d)
+          out.push({ data: d, persona_id: p.persona_id, segnaposto: null, commessa_id: p.commessa_id,
+            ore: quote[out.length], posizione: (pos[d] || 0) + 1, nota: null })
+        }
+      }
+      d = aggiungiGiorni(d, 1)
+    }
+    if (out.length < quote.length) return { ok: false, messaggio: 'Non ho trovato abbastanza giorni liberi.' }
+    return {
+      ok: true, assegnazioni: out, ore: sommaOre(out), giorni: out.length, dal: out[0].data, al: out[out.length - 1].data,
+      occupati: occupati, inChiusura: inChiusura, oltreFineRapporto: oltre, festiviSaltati: festiviSaltati
+    }
+  }
   function commessaChiusa(c) { return !!c && (c.stato === 'Finito' || STATI_CHIUSI.indexOf(c.stato_commessa) >= 0) }
 
   // ── Avvisi ────────────────────────────────────────────────────────────────
@@ -1007,6 +1052,7 @@
     11: { icona: '👷', etichetta: 'Persona senza lavoro' },
     12: { icona: '🏗️', etichetta: 'Cantiere senza persone' },
     residuo: { icona: '📋', etichetta: 'Ore da pianificare' },
+    residuoEst: { icona: '👷', etichetta: 'Ore Esterni da assegnare' },
     meteo: { icona: '🌧️', etichetta: 'Dati pioggia mancanti' },
     periodo: { icona: '🌗', etichetta: 'Cambio estate / inverno' },
     inizio: { icona: '▶️', etichetta: 'Inizia ma non è «In corso»' },
@@ -1016,7 +1062,7 @@
   var STATI_ATTIVI = ['Confermato', 'In corso']
 
   // S: { imp, cal, persone:[{id,nome}], assenze, commesse, capitoli, assegnazioni,
-  //      previste, ignorati:[chiave], oggi, meteoVuoto, orizzonteGiorni, esterni (v7: insiemeEsterni) }
+  //      previste, ignorati:[chiave], oggi, meteoVuoto, orizzonteGiorni }
   function calcolaAvvisi(S) {
     var cal = S.cal, imp = cal.imp
     var viaggioIncluso = imp.viaggio_incluso !== false
@@ -1105,17 +1151,22 @@
     commesse.forEach(function (c) {
       var assC = ass.filter(function (a) { return a.commessa_id === c.id })
       var capC = (S.capitoli || []).filter(function (x) { return x.commessa_id === c.id })
+      // v7: S.esterni = insiemeEsterni(operai) → numeri della squadra senza Esterni e senza capitoli Esterni
       var rie = riepilogoCommessa(c, capC, ass, cal, viaggioIncluso, S.esterni)
       var finita = c.stato === 'Finito'
 
       // Ore da pianificare (punto 5)
       // (una riparazione ancora senza date sta in coda: non è un'ora «mancante»)
       var inCoda = c.tipo === 'Riparazione' && !assC.length
-      if (!c.interna && !finita && capC.length && !inCoda) {
+      if (!c.interna && !finita && rie.nCapitoliSquadra && !inCoda) {
         if (rie.residue > 1e-9) push('residuo', 'r|' + c.id + '|' + rie.residue, c.numero + ' ' + c.nome + ': mancano ' + fmtOre(rie.residue) + ' non pianificate', rie.fine || c.data_inizio, { commessa_id: c.id })
         else if (rie.residue < -1e-9) push('residuo', 'r|' + c.id + '|' + rie.residue, c.numero + ' ' + c.nome + ': pianificate ' + fmtOre(-rie.residue) + ' oltre il preventivo', rie.fine, { commessa_id: c.id })
-        // v7: ore degli Esterni ancora da assegnare (si assegnano a mano: «Assegna a…» nella scheda)
-        if (rie.residueEsterni > 1e-9) push('residuo', 're|' + c.id + '|' + rie.residueEsterni, c.numero + ' ' + c.nome + ': 👷 Esterni, mancano ' + fmtOre(rie.residueEsterni) + ' da assegnare (scheda → «Assegna a…»)', rie.fine || c.data_inizio, { commessa_id: c.id })
+      }
+      // v7: ore degli Esterni (capitoli 👷 Esterni) ancora da assegnare: solo avviso, si assegnano a mano
+      var rE = rie.esterni
+      if (!c.interna && !finita && rE.nCapitoli && S.esterni) {
+        if (rE.residue > 1e-9) push('residuoEst', 're|' + c.id + '|' + rE.residue, c.numero + ' ' + c.nome + ': mancano ' + fmtOre(rE.residue) + ' degli Esterni da assegnare (scheda della commessa → «Assegna a…»)', rE.fine || rie.fine || c.data_inizio, { commessa_id: c.id })
+        else if (rE.residue < -1e-9) push('residuoEst', 're|' + c.id + '|' + rE.residue, c.numero + ' ' + c.nome + ': Esterni pianificati ' + fmtOre(-rE.residue) + ' oltre le ore Esterni del preventivo', rE.fine, { commessa_id: c.id })
       }
       // Legame con Anagrafiche (solo per commesse passate da unisciCantieri)
       if (!c.interna && !finita) {
@@ -1170,8 +1221,8 @@
 
       // Spostata fra estate e inverno: le ore sono rimaste quelle di prima
       if (c.periodo_cambiato && !finita && !c.interna) {
-        push('periodo', 'p|' + c.id + '|' + rie.inizio + '|' + rie.fine, c.numero + ' ' + c.nome + ' è stata spostata fra estate e inverno: ' +
-          'le ore di ogni giorno sono rimaste quelle di prima (' + fmtGiorno(rie.inizio) + ' – ' + fmtGiorno(rie.fine) + ')', rie.inizio,
+        push('periodo', 'p|' + c.id + '|' + rie.inizioTutte + '|' + rie.fineTutte, c.numero + ' ' + c.nome + ' è stata spostata fra estate e inverno: ' +
+          'le ore di ogni giorno sono rimaste quelle di prima (' + fmtGiorno(rie.inizioTutte) + ' – ' + fmtGiorno(rie.fineTutte) + ')', rie.inizioTutte,
           { commessa_id: c.id, azioni: [{ id: 'ricalcola', etichetta: 'Ricalcola con le ore del nuovo periodo' }] })
       }
 
@@ -1218,8 +1269,9 @@
       // 12. cantiere confermato senza persone
       if (STATI_ATTIVI.indexOf(c.stato) >= 0 && !c.interna) {
         var buchi = []
-        for (var d = rie.inizio; d <= rie.fine; d = aggiungiGiorni(d, 1)) {
-          if (eLavorativo(cal, d) && rie.date.indexOf(d) < 0) buchi.push(d)
+        for (var d = rie.inizioTutte; d && d <= rie.fineTutte; d = aggiungiGiorni(d, 1)) {
+          // v7: un giorno con solo un Esterno in cantiere non è «nessuno in cantiere»
+          if (eLavorativo(cal, d) && rie.dateTutte.indexOf(d) < 0) buchi.push(d)
         }
         if (buchi.length) {
           push(12, '12|' + c.id + '|' + buchi.join(','), c.numero + ' ' + c.nome + ' è ' + c.stato.toLowerCase() + ' ma nessuno è in cantiere: ' +
@@ -1370,10 +1422,10 @@
     // Esterni (v6)
     RAPPORTO_ESTERNO: RAPPORTO_ESTERNO, eEsterno: eEsterno, insiemeEsterni: insiemeEsterni, gruppiPersone: gruppiPersone,
     nomeDitta: nomeDitta, dittaDi: dittaDi, etichettaEsterno: etichettaEsterno, senzaEsterni: senzaEsterni,
-    // Esterni nel piano (v7)
-    SCRITTA_ESTERNO: SCRITTA_ESTERNO, eCapitoloEsterno: eCapitoloEsterno, nomeConEsterno: nomeConEsterno, nomeSenzaEsterno: nomeSenzaEsterno,
-    capitoliSquadra: capitoliSquadra, capitoliEsterni: capitoliEsterni, soloEsterni: soloEsterni, pianoEsterno: pianoEsterno,
     DITTA_NON_LEGGIBILE: DITTA_NON_LEGGIBILE, DITTA_NON_INDICATA: DITTA_NON_INDICATA,
+    // capitoli Esterni e «Assegna a…» (v7)
+    soloEsterni: soloEsterni, capitoliSquadra: capitoliSquadra, capitoliEsterni: capitoliEsterni, oreSquadra: oreSquadra,
+    oreEsterni: oreEsterni, giornoEsterno: giornoEsterno, primoGiornoEsterno: primoGiornoEsterno, pianoEsterno: pianoEsterno,
     // avvisi e viste
     TIPI_AVVISO: TIPI_AVVISO, calcolaAvvisi: calcolaAvvisi, intervalloVista: intervalloVista,
     spostaVista: spostaVista, blocchiMargine: blocchiMargine
