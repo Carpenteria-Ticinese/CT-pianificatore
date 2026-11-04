@@ -34,7 +34,16 @@
   function giorniNelMese(a, m) { return new Date(Date.UTC(a, m, 0)).getUTCDate() }
   function lunediDi(iso) { return aggiungiGiorni(iso, 1 - giornoSettimana(iso)) }
   function differenzaGiorni(da, a) { return Math.round((aData(a) - aData(da)) / 86400000) }
-  function oggiIso(d) { d = d || new Date(); return isoDa(d.getFullYear(), d.getMonth() + 1, d.getDate()) }
+  // v11: il giorno è sempre quello svizzero, non quello del computer né UTC (mezzanotte a Zurigo).
+  function oggiIso(d) {
+    d = d || new Date()
+    try {
+      var v = {}
+      new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Zurich', year: 'numeric', month: '2-digit', day: '2-digit' })
+        .formatToParts(d).forEach(function (x) { v[x.type] = x.value })
+      return v.year + '-' + v.month + '-' + v.day
+    } catch (_) { return isoDa(d.getFullYear(), d.getMonth() + 1, d.getDate()) }
+  }
 
   var GIORNI_BREVI = ['', 'lun', 'mar', 'mer', 'gio', 'ven', 'sab', 'dom']
   var GIORNI_LUNGHI = ['', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato', 'domenica']
@@ -942,11 +951,34 @@
   //   rapporto (facoltativo): 'dipendente' = solo Dipendenti, 'esterno' = solo Esterni.
   function personeAttive(operai, oggi, rapporto) {
     return (operai || []).filter(function (o) {
-      if (o.attivo === false || (o.data_fine_rapporto && o.data_fine_rapporto < oggi)) return false
+      if (inArchivio(o, oggi)) return false
       if (rapporto === 'dipendente') return !eEsterno(o)
       if (rapporto === 'esterno') return eEsterno(o)
       return true
     })
+  }
+
+  // ── Archivio (Umberto, 4.11.2026) — v11 ───────────────────────────────────
+  // In archivio: fine rapporto passata (l'ultimo giorno si lavora ancora) oppure attivo = false.
+  // Il contrario esatto di personeAttive. I nomi e le assegnazioni vecchie restano.
+  function inArchivio(o, oggi) { return !!o && (o.attivo === false || !!(o.data_fine_rapporto && o.data_fine_rapporto < oggi)) }
+  // «In archivio dal …» = il giorno dopo l'ultimo giorno di lavoro. Senza data: solo «In archivio».
+  function testoArchivio(o, oggi) {
+    return o && o.data_fine_rapporto && o.data_fine_rapporto < oggi ? 'In archivio dal ' + fmtDataAnno(aggiungiGiorni(o.data_fine_rapporto, 1)) : 'In archivio'
+  }
+  function personeArchivio(operai, oggi) { return (operai || []).filter(function (o) { return inArchivio(o, oggi) }) }
+  // { id: operaio } di chi è in archivio
+  function insiemeArchivio(operai, oggi) {
+    var s = {}
+    personeArchivio(operai, oggi).forEach(function (o) { s[o.id] = o })
+    return s
+  }
+  // Giornata di chi è in archivio già nel suo periodo di lavoro: è storia, non si cambia.
+  // Dopo l'ultimo giorno (o, senza data, da oggi in poi) è un piano rimasto: si toglie o si passa a un altro.
+  function giornataStorica(a, archivio, oggi) {
+    var o = a && a.persona_id && archivio && archivio[a.persona_id]
+    if (!o) return false
+    return o.data_fine_rapporto && o.data_fine_rapporto < oggi ? a.data <= o.data_fine_rapporto : a.data < oggi
   }
 
   // ── Esterni (lattonieri e altre ditte) — v6 ───────────────────────────────
@@ -1083,6 +1115,7 @@
     9: { icona: '➗', etichetta: 'Poche ore residue' },
     10: { icona: '✅', etichetta: 'Finito prima' },
     11: { icona: '👷', etichetta: 'Persona senza lavoro' },
+    archivio: { icona: '🗄️', etichetta: 'In archivio, con giornate ancora nel piano' },
     12: { icona: '🏗️', etichetta: 'Cantiere senza persone' },
     residuo: { icona: '📋', etichetta: 'Ore da pianificare' },
     residuoEst: { icona: '👷', etichetta: 'Ore Esterni da assegnare' },
@@ -1352,6 +1385,17 @@
       })
     })
 
+    // v11: chi è in archivio ma ha ancora giornate dopo l'ultimo giorno. Niente si toglie da solo.
+    var dopoFine = {}
+    ass.forEach(function (a) {
+      if (a.persona_id && S.archivio && S.archivio[a.persona_id] && !giornataStorica(a, S.archivio, oggi)) (dopoFine[a.persona_id] = dopoFine[a.persona_id] || []).push(a.data)
+    })
+    Object.keys(dopoFine).forEach(function (pid) {
+      var g = Array.from(new Set(dopoFine[pid])).sort()
+      push('archivio', 'archivio|' + pid + '|' + g.join(','), nomePersona(pid) + ': ' + testoArchivio(S.archivio[pid], oggi) + ', ma ha ancora ' + g.length + (g.length === 1 ? ' giornata' : ' giornate') +
+        ' nel piano: ' + g.map(fmtGiorno).join(', ') + '. Toglile o passale a un altro.', g[0], { persona_id: pid })
+    })
+
     if (S.meteoVuoto && !meteoAvvisato) {
       push('meteo', 'meteo|vuoto', 'Dati pioggia mancanti: la tabella dei valori normali MeteoSvizzera è vuota, il margine pioggia non si può calcolare', null)
     }
@@ -1455,6 +1499,7 @@
     STATI_PIANIFICABILI: STATI_PIANIFICABILI, STATI_CHIUSI: STATI_CHIUSI, indirizzoCantiere: indirizzoCantiere,
     pulito: pulito, unisciCantieri: unisciCantieri, commessePianificabili: commessePianificabili, senzaStatoDaMettere: senzaStatoDaMettere, TESTO_SENZA_STATO: TESTO_SENZA_STATO, cercaCantiere: cercaCantiere,
     commessaChiusa: commessaChiusa, personeAttive: personeAttive,
+    inArchivio: inArchivio, testoArchivio: testoArchivio, personeArchivio: personeArchivio, insiemeArchivio: insiemeArchivio, giornataStorica: giornataStorica,
     // Esterni (v6)
     RAPPORTO_ESTERNO: RAPPORTO_ESTERNO, eEsterno: eEsterno, insiemeEsterni: insiemeEsterni, gruppiPersone: gruppiPersone,
     nomeDitta: nomeDitta, dittaDi: dittaDi, etichettaEsterno: etichettaEsterno, senzaEsterni: senzaEsterni,

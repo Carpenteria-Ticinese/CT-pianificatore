@@ -381,3 +381,22 @@ button.chi.esterni { border-color: #9a3412; color: #7c2d12; background: #ffedd5;
 .lista-spostamento li { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border: 2px solid var(--border-lt); border-radius: var(--radius); background: var(--surface); overflow-wrap: anywhere; }
 .lista-spostamento li.esterno { border-color: #9a3412; background: #fff7ed; }
 #sp-conflitti .off-scelta { margin-top: 8px; font-weight: 600; }
+
+/* ── Versione 11: Archivio (fine rapporto passata) ───────────────────────── */
+#barra-archivio { padding: 12px 12px 0; }
+#barra-archivio[hidden] { display: none; }
+button.tasto-archivio { font-weight: 700; border-color: #475569; color: #1e293b; background: #e2e8f0; white-space: normal; max-width: 100%; }
+button.tasto-archivio[aria-pressed="true"] { background: #475569; color: #fff; }
+.blocco-archivio { margin: 10px 0; }
+.lista-archivio { list-style: none; margin: 6px 0; padding: 0; }
+.lista-archivio li { margin: 4px 0; padding: 6px 10px; border-left: 6px solid #475569; background: #f1f5f9; border-radius: 6px; overflow-wrap: anywhere; }
+.scritta-archivio { display: block; font-weight: 700; color: #1e293b; font-size: .92rem; line-height: 1.25; white-space: normal; overflow-wrap: anywhere; }
+table.gantt tr.riga-gruppo-archivio td { background: #e2e8f0; border-top: 3px solid #475569; }
+table.gantt td.testa.gruppo-archivio { background: #e2e8f0; color: #1e293b; font-size: 1.05rem; }
+table.gantt td.testa.gruppo-archivio .sottoriga { color: #1e293b; white-space: normal; }
+table.gantt tr.riga-archivio td.testa { border-left: 6px solid #475569; background: #f1f5f9; }
+table.gantt tr.riga-archivio td.cella { background-image: repeating-linear-gradient(135deg, rgba(71,85,105,.08) 0 6px, transparent 6px 12px); }
+@media (max-width: 600px) {
+  button.tasto-archivio { width: 100%; }
+  #pagina-impostazioni .sezione { overflow-x: auto; }
+}

@@ -17,7 +17,7 @@ var O = window.CTOffertaOre    // v4: «Carica offerta Excel» (js/offerta_ore.j
 
 var ST = {
   dati: null, profilo: null, email: '',
-  vista: 'cantieri', zoom: 'mese', ancora: C.oggiIso(), pagina: 'piano',
+  vista: 'cantieri', zoom: 'mese', ancora: C.oggiIso(), pagina: 'piano', mostraArchivio: false,
   cal: null, nomi: {}, persone: [], esterni: [], esterniSet: {}, perId: {}, capPer: {}, assPer: {}, rie: {},
   meteoMap: {}, magazzino: null, coda: [], avvisi: []
 }
@@ -58,6 +58,35 @@ function nomeChiave(k) {
   return 'Persona ' + p[2] + ' (da decidere' + (c ? ', ' + c.numero : '') + ')'
 }
 function nomeAss(a) { return nomeChiave(C.chiavePersona(a)) }
+
+// ── v11 · Archivio ──────────────────────────────────────────────────────────
+// Chi ha la fine rapporto passata (o attivo = false) sparisce dagli elenchi normali: si vede solo con
+// «Mostra archivio». Si legge, non si assegna. Le sue giornate restano: nessun piano automatico le muove.
+function inArch(id) { return !!(id && ST.archivioSet && ST.archivioSet[id]) }
+function nonArchivio(ass) { return (ass || []).filter(function (a) { return !inArch(a.persona_id) }) }
+function storica(a) { return C.giornataStorica(a, ST.archivioSet, C.oggiIso()) }
+function testoTastoArchivio(n) { return '🗄️ ' + (ST.mostraArchivio ? 'Nascondi' : 'Mostra') + ' archivio (' + n + ')' }
+function tastoArchivio(n) {
+  return '<button type="button" class="tasto-archivio grande" data-n="' + n + '" aria-pressed="' + (ST.mostraArchivio ? 'true' : 'false') + '">' + testoTastoArchivio(n) + '</button>'
+}
+// Tasto + elenco in sola lettura, sotto ogni scelta di persone. extra: altro da mostrare con l'archivio.
+function bloccoArchivio(rapporto, extra) {
+  var l = ST.archivio.filter(function (x) { return !rapporto || x.rapporto === rapporto })
+  if (!l.length) return ''
+  return '<div class="blocco-archivio">' + tastoArchivio(l.length) + '<div data-archivio' + (ST.mostraArchivio ? '' : ' hidden') + '>' +
+    '<p class="aiuto">Chi è in archivio si legge, ma non si assegna a lavori nuovi.</p><ul class="lista-archivio">' + l.map(function (x) {
+      return '<li><strong>' + esc(x.nome) + '</strong>' + (x.etichetta ? ' <span class="etichetta-esterno">' + esc(x.etichetta) + '</span>' : '') + '<span class="scritta-archivio">🗄️ ' + esc(x.testo) + '</span></li>'
+    }).join('') + '</ul>' + (extra || '') + '</div></div>'
+}
+function cambiaArchivio() {
+  ST.mostraArchivio = !ST.mostraArchivio
+  document.querySelectorAll('.tasto-archivio').forEach(function (b) {
+    b.textContent = testoTastoArchivio(b.dataset.n)
+    b.setAttribute('aria-pressed', ST.mostraArchivio ? 'true' : 'false')
+  })
+  document.querySelectorAll('[data-archivio]').forEach(function (el) { el.hidden = !ST.mostraArchivio })
+  if (ST.pagina === 'piano' && ST.vista === 'persone') disegnaGriglia()
+}
 
 // ── Finestre (pannelli e conferme) ──────────────────────────────────────────
 // ESC chiude la finestra in cima. Clic fuori NON chiude: solo ✕, Chiudi, Annulla, ESC.
@@ -211,7 +240,11 @@ function nomeSpostamento(x) {
   }
   return nomeChiave(x.chiave)
 }
-function confermaSpostamento(c, prima, dopo, domanda) {
+function confermaSpostamento(c, primaTutte, dopoTutte, domanda) {
+  // v11: le giornate di chi è in archivio restano dove sono (vedi applicaPiano)
+  var prima = nonArchivio(primaTutte)
+  var dopo = dopoTutte.filter(function (x, i) { return !(primaTutte[i] && inArch(primaTutte[i].persona_id)) })
+  var ferme = Array.from(new Set(primaTutte.filter(function (a) { return inArch(a.persona_id) }).map(function (a) { return a.persona_id })))
   var rs = C.riepilogoSpostamento({ prima: prima, dopo: dopo, esterni: ST.esterniSet, assTutte: ST.dati.assegnazioni, commessaId: c.id })
   var righe = rs.persone.slice().sort(function (a, b) { return (a.esterno ? 1 : 0) - (b.esterno ? 1 : 0) })
   var periodo = function (d, a) { return d === a ? gAnno(d) : 'dal ' + gAnno(d) + ' al ' + gAnno(a) }
@@ -224,6 +257,7 @@ function confermaSpostamento(c, prima, dopo, domanda) {
           '<span>prima: ' + periodo(x.dalPrima, x.alPrima) + '</span><span>dopo: <strong>' + periodo(x.dalDopo, x.alDopo) + '</strong></span>' +
           '<span class="aiuto">' + x.righe + (x.righe === 1 ? ' giornata' : ' giornate') + ', ' + fOre(x.ore) + '</span></li>'
       }).join('') + '</ul>'
+    if (ferme.length) h += '<div class="esito attenzione" id="sp-archivio">🗄️ ' + ferme.map(function (id) { return esc(ST.nomi[id]) + ' (' + esc(C.testoArchivio(ST.archivioSet[id], C.oggiIso())) + ')' }).join(', ') + ': le sue giornate restano dove sono.</div>'
     if (rs.conflitti.length) {
       h += '<div id="sp-conflitti" class="esito attenzione">⚠️ ' + rs.conflitti.map(function (k) {
         return esc(nomeSpostamento({ esterno: true, persona_id: k.persona_id })) + ' ha già lavoro il ' + gAnno(k.data) + ' (' + fOre(k.oreAltre) + ' su altre commesse)'
@@ -346,6 +380,11 @@ function ricostruisci() {
   ST.esterni = gr.esterni
     .map(function (o) { return { id: o.id, nome: ST.nomi[o.id], data_fine_rapporto: o.data_fine_rapporto, rapporto: 'esterno', etichetta: C.etichettaEsterno(o, d.ditte) } })
     .sort(perNome)
+  // v11: Archivio. Il contrario esatto di ST.persone + ST.esterni. ST.nomi li tiene tutti.
+  ST.archivioSet = C.insiemeArchivio(d.operai, oggi)
+  ST.archivio = C.personeArchivio(d.operai, oggi)
+    .map(function (o) { return { id: o.id, nome: ST.nomi[o.id], rapporto: C.eEsterno(o) ? 'esterno' : 'dipendente', testo: C.testoArchivio(o, oggi), etichetta: C.eEsterno(o) ? C.etichettaEsterno(o, d.ditte) : '' } })
+    .sort(perNome)
   ST.titolariMancanti = titolariNonInOperai()
   ST.perId = {}; d.commesse.forEach(function (c) { ST.perId[c.id] = c })
   ST.capPer = {}; d.capitoli.forEach(function (x) { (ST.capPer[x.commessa_id] = ST.capPer[x.commessa_id] || []).push(x) })
@@ -360,7 +399,8 @@ function ricostruisci() {
     cal: ST.cal, persone: ST.persone, nomi: ST.nomi, assenze: d.assenze, commesse: d.commesse, capitoli: d.capitoli,
     assegnazioni: d.assegnazioni, previste: d.previste, ignorati: d.ignorati, oggi: oggi,
     meteoVuoto: !Object.keys(ST.meteoMap).length, riparazioniInCoda: ST.coda, orizzonteGiorni: 28,
-    esterni: ST.esterniSet          // v7: numeri della squadra senza Esterni; avviso «Ore Esterni da assegnare»
+    esterni: ST.esterniSet,         // v7: numeri della squadra senza Esterni; avviso «Ore Esterni da assegnare»
+    archivio: ST.archivioSet        // v11: avviso «In archivio, con giornate ancora nel piano»
   })
 }
 // Il titolare lavora in cantiere: deve essere fra gli operai attivi. Si riconosce come
@@ -409,6 +449,10 @@ function disegna() {
   var db = $('avviso-db')
   db.hidden = ST.dati.versioneDb >= 2
   db.textContent = '🗄️ Database non aggiornato: manca l’SQL PL_02. Il piano si vede e si modifica, ma «Pianifica commessa» non è ancora disponibile.'
+  // v11: tasto dell'archivio nella vista Persone
+  var ba = $('barra-archivio')
+  ba.hidden = !(ST.pagina === 'piano' && ST.vista === 'persone' && ST.archivio.length)
+  ba.innerHTML = ST.archivio.length ? tastoArchivio(ST.archivio.length) : ''
   if (ST.pagina === 'piano') { disegnaGriglia(); disegnaCoda() } else disegnaImpostazioni()
 }
 function titoloPeriodo() {
@@ -531,24 +575,39 @@ function righePersone(giorni, oggi) {
   // v6: Esterni in un gruppo a parte, sotto, con il nome della ditta
   var esterni = ST.esterni.map(function (p) { return { chiave: 'p:' + p.id, nome: p.nome, persona_id: p.id, esterno: true, etichetta: p.etichetta } })
   var viste = {}; righe.concat(esterni).forEach(function (r) { viste[r.chiave] = 1 })
+  // v11: chi è in archivio sta in fondo, nel suo gruppo: sempre se ha giornate nel periodo (i nomi sulle
+  // assegnazioni vecchie restano), tutti gli altri solo con «Mostra archivio».
+  var archivio = []
+  function rigaArchivio(x) { return { chiave: 'p:' + x.id, nome: x.nome, persona_id: x.id, archivio: true, scritta: x.testo, esterno: x.rapporto === 'esterno', etichetta: x.etichetta } }
   nelPeriodo.forEach(function (a) {
     var k = C.chiavePersona(a)
     if (viste[k]) return
     viste[k] = 1
-    if (a.persona_id && ST.esterniSet[a.persona_id]) {   // Esterno non più attivo con righe nel periodo
-      var o = ST.dati.operai.find(function (x) { return x.id === a.persona_id })
-      esterni.push({ chiave: k, nome: nomeChiave(k), persona_id: a.persona_id, esterno: true, etichetta: C.etichettaEsterno(o, ST.dati.ditte) })
+    if (inArch(a.persona_id)) {
+      archivio.push(rigaArchivio(ST.archivio.find(function (x) { return x.id === a.persona_id })))
       return
     }
     righe.push({ chiave: k, nome: nomeChiave(k), persona_id: a.persona_id || null, segnaposto: !a.persona_id })
   })
-  if (!righe.length && !esterni.length) return ''
+  if (ST.mostraArchivio) ST.archivio.forEach(function (x) { if (!viste['p:' + x.id]) archivio.push(rigaArchivio(x)) })
+  archivio.sort(function (a, b) { return a.nome.localeCompare(b.nome) })
+  if (!righe.length && !esterni.length && !archivio.length) return ''
   if (esterni.length) {
     righe.push({ gruppo: true, n: esterni.length })
     righe = righe.concat(esterni)
   }
+  if (archivio.length) {
+    righe.push({ gruppoArchivio: true, n: archivio.length })
+    righe = righe.concat(archivio)
+  }
   var h = ''
   righe.forEach(function (r) {
+    if (r.gruppoArchivio) {
+      h += '<tr class="riga-gruppo riga-gruppo-archivio" data-gruppo="archivio"><td class="testa gruppo-archivio"><strong>🗄️ Archivio</strong>' +
+        '<span class="sottoriga">' + r.n + (r.n === 1 ? ' persona' : ' persone') + ' · si legge, non si assegna</span></td>' +
+        '<td class="gruppo-archivio-resto" colspan="' + giorni.length + '"></td></tr>'
+      return
+    }
     if (r.gruppo) {
       h += '<tr class="riga-gruppo" data-gruppo="esterni"><td class="testa gruppo-esterni"><strong>👷 Esterni</strong>' +
         '<span class="sottoriga">altre ditte · ' + r.n + (r.n === 1 ? ' persona' : ' persone') + ' · solo a mano</span></td>' +
@@ -556,8 +615,9 @@ function righePersone(giorni, oggi) {
       return
     }
     var mie = nelPeriodo.filter(function (a) { return C.chiavePersona(a) === r.chiave })
-    h += '<tr data-riga="' + esc(r.chiave) + '"' + (r.esterno ? ' class="riga-esterno"' : '') + '><td class="testa"><strong>' + esc(r.nome) + '</strong>' +
+    h += '<tr data-riga="' + esc(r.chiave) + '"' + (r.archivio ? ' class="riga-archivio"' : r.esterno ? ' class="riga-esterno"' : '') + '><td class="testa"><strong>' + esc(r.nome) + '</strong>' +
       (r.esterno ? '<span class="etichetta-esterno">' + esc(r.etichetta) + '</span>' : '') +
+      (r.archivio ? '<span class="scritta-archivio">🗄️ ' + esc(r.scritta) + '</span>' : '') +
       '<span class="sottoriga">' + fOre(C.sommaOre(mie)) + ' nel periodo</span></td>'
     giorni.forEach(function (d) {
       var info = C.infoGiorno(ST.cal, d)
@@ -576,7 +636,7 @@ function righePersone(giorni, oggi) {
           var col = colore(c)
           var testo = ST.zoom === 'settimana' ? c.numero + ' · ' + fOre(a.ore) : ST.zoom === 'mese' ? (c.numero || '').slice(3) + ' · ' + f(a.ore, 2) : f(a.ore, 1)
           titolo += ' · ' + c.numero + ' ' + (c.nome || '') + ' · ' + fOre(a.ore) + (a.nota ? ' · ' + a.nota : '')
-          return '<div class="chip' + (a.nota && /ferie da recuperare/i.test(a.nota) ? ' recupero' : '') + '" draggable="true" data-trascina="ass" data-ass="' + a.id + '" style="background:' + col + ';color:' + testoSu(col) + '">' + esc(testo) + '</div>'
+          return '<div class="chip' + (a.nota && /ferie da recuperare/i.test(a.nota) ? ' recupero' : '') + '"' + (storica(a) ? '' : ' draggable="true" data-trascina="ass"') + ' data-ass="' + a.id + '" style="background:' + col + ';color:' + testoSu(col) + '">' + esc(testo) + '</div>'
         }).join('') + '</div>'
         if (assenza) {
           dentro = dentro.replace('<div class="chips">', '<div class="chips"><div class="chip" style="background:#9ca3af;color:#111">' + esc(assenza.tipo) + '</div>')
@@ -651,6 +711,9 @@ async function lasciaSu(t, td) {
     var a = ST.dati.assegnazioni.find(function (x) { return x.id === t.ass })
     if (!a || !td.dataset.persona) return
     var k = td.dataset.persona
+    // v11: storia intatta, e a chi è in archivio non si dà lavoro nuovo
+    if (storica(a)) { toast('Giornata di ' + nomeAss(a) + ', in archivio: resta com\'è.', true); return }
+    if (k.indexOf('p:') === 0 && inArch(k.slice(2))) { toast(nomeChiave(k) + ' è in archivio: non si assegna a lavori nuovi.', true); return }
     var campi = { data: data }
     if (k.indexOf('p:') === 0) { campi.persona_id = k.slice(2); campi.segnaposto = null }
     else {
@@ -665,7 +728,10 @@ async function lasciaSu(t, td) {
     toast('Spostata: ' + (ST.perId[a.commessa_id] || {}).numero + ' · ' + fOre(a.ore) + ' → ' + nomeChiave(k) + ', ' + C.fmtGiorno(data))
   } else if (t.tipo === 'coda') {
     var r = ST.perId[t.commessa_id]
-    if (td.dataset.persona && td.dataset.persona.indexOf('p:') === 0 && ST.esterniSet[td.dataset.persona.slice(2)]) {
+    if (td.dataset.persona && td.dataset.persona.indexOf('p:') === 0 && inArch(td.dataset.persona.slice(2))) {
+      toast(nomeChiave(td.dataset.persona) + ' è in archivio: non si assegna a lavori nuovi. Scegli fra chi lavora.', true)
+      apriRiempi(r, data)
+    } else if (td.dataset.persona && td.dataset.persona.indexOf('p:') === 0 && ST.esterniSet[td.dataset.persona.slice(2)]) {
       // v6: Riempi non usa gli Esterni → si sceglie fra i Dipendenti
       toast('Gli Esterni non entrano in «Riempi»: scegli i Dipendenti. Un Esterno si assegna a mano cliccando la sua cella.', true)
       apriRiempi(r, data)
@@ -697,7 +763,9 @@ function rigaAss(a) {
 // opz.ripianificato: Riempi o Ricalcola hanno rifatto le ore: si toglie il segno.
 async function applicaPiano(commessaId, nuove, messaggio, opz) {
   opz = opz || {}
-  var prima = (ST.assPer[commessaId] || []).slice()
+  // v11: qui passano tutti i piani automatici. Le giornate di chi è in archivio non si toccano e non se ne creano di nuove.
+  nuove = nonArchivio(nuove)
+  var prima = nonArchivio(ST.assPer[commessaId])
   var vecchie = prima.map(function (a) { return a.id })
   var righe = nuove.map(function (a) { var r = rigaAss(a); r.commessa_id = commessaId; return r })
   var c = ST.perId[commessaId]
@@ -738,14 +806,25 @@ function apriAssegna(p) {
     })
     var h = ''
     var sceltoEsterno = p.chiave && p.chiave.indexOf('p:') === 0 && ST.esterniSet[p.chiave.slice(2)]
-    if (!info.lavorativo && !(info.tipo === 'chiusura' && sceltoEsterno)) h += '<div class="esito attenzione">⚠️ Giorno non lavorativo: ' + esc(info.etichetta) + '. Puoi assegnare lo stesso: comparirà un avviso.</div>'
+    var sceltoArchivio = p.chiave && p.chiave.indexOf('p:') === 0 && inArch(p.chiave.slice(2))
+    if (!sceltoArchivio && !info.lavorativo && !(info.tipo === 'chiusura' && sceltoEsterno)) h += '<div class="esito attenzione">⚠️ Giorno non lavorativo: ' + esc(info.etichetta) + '. Puoi assegnare lo stesso: comparirà un avviso.</div>'
     h += '<h3>' + (p.chiave ? 'Già assegnato a ' + esc(nomeChiave(p.chiave)) : 'Già in ' + esc((ST.perId[p.commessa_id] || {}).numero || '')) + '</h3>'
     if (!giaQui.length) h += '<p class="aiuto">Niente, per ora.</p>'
     else h += '<ul class="lista-ass">' + giaQui.map(function (a) {
       var c = ST.perId[a.commessa_id] || {}
       return '<li><span><strong>' + esc(c.numero) + '</strong> ' + esc(c.nome) + ' · ' + esc(nomeAss(a)) + ' · <strong>' + fOre(a.ore) + '</strong>' + (a.nota ? ' · ' + esc(a.nota) : '') + '</span>' +
-        '<span><button type="button" class="piccolo" data-cambia="' + a.id + '">Ore</button> <button type="button" class="piccolo pericolo" data-togli="' + a.id + '">Togli</button></span></li>'
+        (storica(a) ? '<span class="scritta-archivio">🗄️ Storico, non si cambia</span></li>' :
+        '<span><button type="button" class="piccolo" data-cambia="' + a.id + '">Ore</button> <button type="button" class="piccolo pericolo" data-togli="' + a.id + '">Togli</button></span></li>')
     }).join('') + '</ul>'
+    // v11: riga di chi è in archivio → si legge. La scelta della persona non deve cadere su un altro senza dirlo.
+    if (sceltoArchivio) {
+      h += '<div class="esito attenzione" id="as-archivio">🗄️ <strong>' + esc(nomeChiave(p.chiave)) + '</strong>: ' + esc(C.testoArchivio(ST.archivioSet[p.chiave.slice(2)], C.oggiIso())) + '. Si legge, ma non si assegna a lavori nuovi.</div>' +
+        '<div class="riga-bottoni"><button type="button" class="grande" id="as-chiudi">Chiudi</button></div>'
+      w.corpo.innerHTML = h
+      w.corpo.querySelector('#as-chiudi').addEventListener('click', w.chiudi)
+      collegaRighe()
+      return
+    }
     var personaSel = p.chiave && p.chiave.indexOf('p:') === 0 ? p.chiave.slice(2) : ''
     h += '<h3>Nuova assegnazione</h3><div class="campi">' +
       '<div class="campo"><label for="as-persona">Persona</label><select id="as-persona">' +
@@ -759,7 +838,7 @@ function apriAssegna(p) {
       '</select><span class="etichetta-esterno" id="as-esterno" hidden></span></div>' +
       '<div class="campo"><label for="as-commessa">Commessa</label><select id="as-commessa">' +
       commesseScelta().map(function (c) { return '<option value="' + c.id + '"' + (c.id === (p.commessa_id || (p.chiave && p.chiave.split(':')[1])) ? ' selected' : '') + '>' + esc(c.numero + ' ' + c.nome) + '</option>' }).join('') +
-      '</select></div></div>' +
+      '</select></div></div>' + bloccoArchivio() +
       '<div class="campo" style="margin-top:10px"><label>Ore</label><div class="rapidi" id="as-rapidi"></div>' +
       '<input id="as-ore" type="text" inputmode="decimal" placeholder="ore, es. 4,5" hidden aria-label="Ore (altro)"></div>' +
       '<div class="riga-bottoni"><button type="button" class="primario grande" id="as-salva">Assegna</button><button type="button" id="as-chiudi">Chiudi</button></div>' +
@@ -813,6 +892,9 @@ function apriAssegna(p) {
         disegnaPannello()
       })
     })
+    collegaRighe()
+  }
+  function collegaRighe() {
     w.corpo.querySelectorAll('[data-togli]').forEach(function (b) {
       b.addEventListener('click', function () {
         esegui(async function () {
@@ -1648,6 +1730,7 @@ function collegaPianificazione(w, c) {
 async function segnaFinito(c, data) {
   var ass = ST.assPer[c.id] || []
   var pf = C.pianoFinitoIl(ass, data)
+  pf.liberate = pf.liberate.filter(function (a) { return !storica(a) })   // v11: la storia di chi è in archivio resta
   var fineP = ass.length ? ass.map(function (a) { return a.data }).sort().pop() : null
   var testo = 'Segnare <strong>' + esc(c.numero + ' ' + c.nome) + '</strong> finito il ' + gAnno(data) + '?'
   if (pf.liberate.length) testo += '<br>Le <strong>' + pf.liberate.length + '</strong> assegnazioni dopo questa data vengono tolte e quei giorni tornano liberi.'
@@ -1666,7 +1749,7 @@ function apriRiempi(c, dataProposta, schedaW) {
   w.corpo.innerHTML = '<p>Ore da coprire: <strong>' + fOre(ore) + '</strong> (preventivo della squadra' + (oreEst > 0 ? '; le ' + fOre(oreEst) + ' 👷 Esterni sono a parte' : '') + ').</p><div class="campi">' +
     campo('Data inizio', '<input id="ri-data" type="date" value="' + esc(inizio) + '">') + '</div>' +
     '<h3>Persone</h3><p><label><input type="radio" name="ri-modo" value="nomi" checked> Con nome</label> &nbsp; <label><input type="radio" name="ri-modo" value="numero"> Solo il numero (nomi da decidere)</label></p>' +
-    '<div id="ri-nomi">' + ST.persone.map(function (p) { return '<p><label><input type="checkbox" value="' + p.id + '"> ' + esc(p.nome) + '</label></p>' }).join('') +
+    '<div id="ri-nomi">' + ST.persone.map(function (p) { return '<p><label><input type="checkbox" value="' + p.id + '"> ' + esc(p.nome) + '</label></p>' }).join('') + bloccoArchivio('dipendente') +
     (ST.esterni.length || oreEst > 0 ? '<div class="nota-esterni" id="ri-nota-esterni"><p class="aiuto">👷 Gli Esterni' + (ST.esterni.length ? ' (' + ST.esterni.length + ')' : '') + ' non sono in questo elenco: «Riempi» usa solo i Dipendenti e copre solo le ore della squadra. ' +
       'Un Esterno si assegna con «Assegna a…» qui accanto' + (ST.esterni.length ? ', o a mano cliccando la sua cella nella vista Persone' : '') + '.</p>' +
       '<button type="button" class="grande" id="ri-assegna-esterni">👷 Assegna a…</button></div>' : '') + '</div>' +
@@ -1679,10 +1762,14 @@ function apriRiempi(c, dataProposta, schedaW) {
   // v7: le righe degli Esterni restano TUTTE (anche dopo la data) e non contano nelle ore della squadra
   function divisione(data) {
     var tutte = ST.assPer[c.id] || []
-    var squadra = C.senzaEsterni(tutte, ST.esterniSet)
+    var conArchivio = C.senzaEsterni(tutte, ST.esterniSet)
+    var squadra = nonArchivio(conArchivio)
     var esterni = C.soloEsterni(tutte, ST.esterniSet)
     var tenute = squadra.filter(function (a) { return a.data < data })
-    return { tenute: tenute, esterni: esterni, sostituite: squadra.length - tenute.length, daCoprire: Math.round((ore - C.sommaOre(tenute)) * 1000) / 1000 }
+    // v11: le giornate di chi è in archivio restano; quelle già lavorate contano nelle ore fatte
+    var archivio = conArchivio.filter(function (a) { return inArch(a.persona_id) })
+    var oreArchivio = C.sommaOre(archivio.filter(storica))
+    return { tenute: tenute, esterni: esterni, archivio: archivio, sostituite: squadra.length - tenute.length, daCoprire: Math.round((ore - C.sommaOre(tenute) - oreArchivio) * 1000) / 1000 }
   }
   function aggiornaNota() {
     var d = q('#ri-data').value, el = q('#ri-sostituisce')
@@ -1691,8 +1778,9 @@ function apriRiempi(c, dataProposta, schedaW) {
     el.hidden = !dv.sostituite && !dv.tenute.length
     el.textContent = (dv.sostituite ? 'Le ' + dv.sostituite + ' assegnazioni di ' + c.numero + ' dal ' + gAnno(d) + ' in poi vengono sostituite. ' : '') +
       (dv.tenute.length ? 'Le ' + dv.tenute.length + ' prima di questa data restano (' + fOre(C.sommaOre(dv.tenute)) + '): si coprono le ' + fOre(dv.daCoprire) + ' che mancano.' : '') +
-      (dv.esterni.length ? ' Le ' + dv.esterni.length + ' righe degli Esterni restano come sono.' : '')
-    el.hidden = el.hidden && !dv.esterni.length
+      (dv.esterni.length ? ' Le ' + dv.esterni.length + ' righe degli Esterni restano come sono.' : '') +
+      (dv.archivio.length ? ' 🗄️ Le ' + dv.archivio.length + ' righe di chi è in archivio restano come sono.' : '')
+    el.hidden = el.hidden && !dv.esterni.length && !dv.archivio.length
   }
   q('#ri-data').addEventListener('change', aggiornaNota)
   aggiornaNota()
@@ -1771,7 +1859,7 @@ function apriAssegnaEsterni(c, schedaW) {
     '<h3>Esterno</h3><div class="lista-esterni" role="radiogroup" aria-label="Esterno">' + ST.esterni.map(function (x) {
       return '<label class="voce-esterno"><input type="radio" name="ae-persona" value="' + x.id + '"' + (x.id === stato.persona ? ' checked' : '') + '>' +
         '<span><strong>' + esc(x.nome) + '</strong> <span class="etichetta-esterno">' + esc(x.etichetta) + '</span></span></label>'
-    }).join('') + '</div>' +
+    }).join('') + '</div>' + bloccoArchivio('esterno') +
     '<div class="campi">' + campo('Data inizio', '<input id="ae-dal" type="date" value="' + esc(dal0) + '">') +
     campo('Ore da assegnare', '<input id="ae-ore" inputmode="decimal" value="' + esc(daAssegnare ? f(daAssegnare, 2) : '') + '" placeholder="es. 21,5">', 'h') + '</div>' +
     '<h3>Come</h3><div class="ae-modi">' +
@@ -1854,7 +1942,7 @@ function sceltaChiusura(c, ch, piano) {
       '<button type="button" data-scelta="sposta_dopo">Sposta tutto dopo la chiusura (inizio ' + gAnno(ripresa) + ')</button>' +
       '<button type="button" data-scelta="interrompi">Interrompi e riprendi dopo (' + gAnno(ripresa) + ')</button>' +
       '<button type="button" data-scelta="lavora_durante">Qualcuno lavora durante la chiusura (ferie da recuperare)</button></div>' +
-      '<div id="sc-chi" hidden><h3>Chi lavora durante la chiusura?</h3>' + ST.persone.map(function (p) { return '<p><label><input type="checkbox" value="' + p.id + '"> ' + esc(p.nome) + '</label></p>' }).join('') +
+      '<div id="sc-chi" hidden><h3>Chi lavora durante la chiusura?</h3>' + ST.persone.map(function (p) { return '<p><label><input type="checkbox" value="' + p.id + '"> ' + esc(p.nome) + '</label></p>' }).join('') + bloccoArchivio('dipendente') +
       '<div class="riga-bottoni"><button type="button" class="primario" data-ok>Continua</button></div><div data-esito></div></div>' +
       '<div class="riga-bottoni"><button type="button" data-no>Annulla</button></div>'
     var fine = function (v) { fatto = true; w.chiudi(); risolvi(v) }
@@ -1994,7 +2082,11 @@ async function azioneAvviso(a, z) {
   var c = ST.perId[a.commessa_id]
   var ass = c ? (ST.assPer[c.id] || []) : []
   if (a.tipo === 'periodo' && z.id === 'ricalcola') {
-    var orePrev = rie(c).orePreventivo
+    // v11: chi è in archivio resta fuori dal nuovo calcolo; le sue giornate già lavorate contano come ore fatte
+    var assTutte = ass
+    ass = nonArchivio(ass)
+    var orePrev = rie(c).orePreventivo - C.sommaOre(C.senzaEsterni(assTutte.filter(storica), ST.esterniSet))
+    if (!ass.length) { mostraErrore(c.numero + ': in questa commessa restano solo persone in archivio. «Ricalcola» rifà il piano con le stesse persone: usa «Riempi» e scegli chi lavora.'); return }
     if (!(orePrev > 0)) { mostraErrore(c.numero + ' non ha ore nei capitoli: non si può ricalcolare.'); return }
     var nuovo = C.pianoRicalcola(ass, { oreTotali: orePrev, cal: ST.cal, commessa: c, assenze: ST.dati.assenze, viaggioIncluso: viaggioIncluso(),
       altreAssegnazioni: ST.dati.assegnazioni.filter(function (x) { return x.commessa_id !== c.id }), esterni: ST.esterniSet })
@@ -2017,7 +2109,7 @@ async function azioneAvviso(a, z) {
       var scelte = await scegliPersone('Chi lavora durante la chiusura?', 'Le ore lavorate in chiusura avranno la nota «ferie da recuperare».')
       if (!scelte || !scelte.length) return
       // v7: le righe degli Esterni restano come sono (le loro ore non le coprono i Dipendenti)
-      var piano = C.pianoLavoraDurante({ assCommessa: C.senzaEsterni(ass, ST.esterniSet), chiusura: ch, personeScelte: scelte, cal: ST.cal, commessa: c, viaggioIncluso: viaggioIncluso(), assenze: ST.dati.assenze, esterni: ST.esterniSet })
+      var piano = C.pianoLavoraDurante({ assCommessa: C.senzaEsterni(nonArchivio(ass), ST.esterniSet), chiusura: ch, personeScelte: scelte, cal: ST.cal, commessa: c, viaggioIncluso: viaggioIncluso(), assenze: ST.dati.assenze, esterni: ST.esterniSet })
         .concat(C.soloEsterni(ass, ST.esterniSet))
       var inCh = piano.filter(function (x) { return x.nota === 'ferie da recuperare' })
       if (!await conferma(esc(scelte.map(function (s) { return ST.nomi[s] }).join(', ')) + ' lavora su ' + esc(c.numero) + ' durante la chiusura: ' + inCh.length + ' giornate, ' + fOre(C.sommaOre(inCh)) + ' (ferie da recuperare). Confermi?')) return
@@ -2025,7 +2117,7 @@ async function azioneAvviso(a, z) {
     }
   } else if (a.tipo === 8) {
     var r = rie(c), ug = r.ultimoGiorno
-    var liberi = ug.persone.filter(function (p) { return p.libere > 1e-9 })
+    var liberi = ug.persone.filter(function (p) { return p.libere > 1e-9 && !inArch(p.persona_id) })
     if (z.id === 'magazzino') {
       if (!ST.magazzino) { mostraErrore('Commessa Magazzino non trovata (numero 00-000). È nello SQL PL_01: rilancialo.'); return }
       if (!await conferma('Assegnare le ore libere di ' + C.fmtGiorno(ug.data) + ' al Magazzino? (' + liberi.map(function (p) { return esc(nomeChiave(p.chiave)) + ' ' + fOre(p.libere) }).join(', ') + ')')) return
@@ -2087,7 +2179,7 @@ function scegliPersone(titolo, nota) {
   return new Promise(function (risolvi) {
     var fatto = false
     var w = apriFinestra(titolo, { centro: true, piccola: true, onChiudi: function () { if (!fatto) risolvi(null) } })
-    w.corpo.innerHTML = (nota ? '<p class="aiuto">' + esc(nota) + '</p>' : '') + ST.persone.map(function (p) { return '<p><label><input type="checkbox" value="' + p.id + '"> ' + esc(p.nome) + '</label></p>' }).join('') +
+    w.corpo.innerHTML = (nota ? '<p class="aiuto">' + esc(nota) + '</p>' : '') + ST.persone.map(function (p) { return '<p><label><input type="checkbox" value="' + p.id + '"> ' + esc(p.nome) + '</label></p>' }).join('') + bloccoArchivio('dipendente') +
       '<div class="riga-bottoni"><button type="button" class="primario" data-ok>Continua</button><button type="button" data-no>Annulla</button></div>'
     w.corpo.querySelector('[data-ok]').addEventListener('click', function () {
       fatto = true
@@ -2154,10 +2246,15 @@ function disegnaImpostazioni() {
     campo('Motivo', '<input id="ch-motivo" placeholder="es. Ferie estive, Natale">') + '</div><div class="riga-bottoni"><button type="button" id="ch-aggiungi">+ Aggiungi chiusura</button></div></div>'
 
   // Assenze
+  // v11: le assenze di chi è in archivio si vedono solo con «Mostra archivio», in sola lettura
+  var assAttive = ST.dati.assenze.filter(function (x) { return !inArch(x.persona_id) })
+  var assArchivio = ST.dati.assenze.filter(function (x) { return inArch(x.persona_id) })
   h += '<div class="sezione"><h2>🚫 Assenze delle persone</h2>' +
-    (ST.dati.assenze.length ? '<table class="elenco"><thead><tr><th>Persona</th><th>Dal</th><th>Al</th><th>Tipo</th><th>Nota</th><th></th></tr></thead><tbody>' +
-      ST.dati.assenze.map(function (x) { return '<tr><td>' + esc(ST.nomi[x.persona_id] || 'Persona sconosciuta') + '</td><td>' + gAnno(x.dal) + '</td><td>' + gAnno(x.al) + '</td><td>' + esc(x.tipo) + '</td><td>' + esc(x.nota || '') + '</td><td><button type="button" class="piccolo pericolo" data-assenza-togli="' + x.id + '">Togli</button></td></tr>' }).join('') +
+    (assAttive.length ? '<table class="elenco"><thead><tr><th>Persona</th><th>Dal</th><th>Al</th><th>Tipo</th><th>Nota</th><th></th></tr></thead><tbody>' +
+      assAttive.map(function (x) { return '<tr><td>' + esc(ST.nomi[x.persona_id] || 'Persona sconosciuta') + '</td><td>' + gAnno(x.dal) + '</td><td>' + gAnno(x.al) + '</td><td>' + esc(x.tipo) + '</td><td>' + esc(x.nota || '') + '</td><td><button type="button" class="piccolo pericolo" data-assenza-togli="' + x.id + '">Togli</button></td></tr>' }).join('') +
       '</tbody></table>' : '<p class="aiuto">Nessuna assenza.</p>') +
+    bloccoArchivio('dipendente', assArchivio.length ? '<h3>Assenze di chi è in archivio</h3><table class="elenco"><thead><tr><th>Persona</th><th>Dal</th><th>Al</th><th>Tipo</th><th>Nota</th></tr></thead><tbody>' +
+      assArchivio.map(function (x) { return '<tr><td>' + esc(ST.nomi[x.persona_id]) + '</td><td>' + gAnno(x.dal) + '</td><td>' + gAnno(x.al) + '</td><td>' + esc(x.tipo) + '</td><td>' + esc(x.nota || '') + '</td></tr>' }).join('') + '</tbody></table>' : '') +
     '<h3>Nuova assenza</h3><div class="campi">' +
     campo('Persona', '<select id="as-p">' + ST.persone.map(function (p) { return '<option value="' + p.id + '">' + esc(p.nome) + '</option>' }).join('') + '</select>') +
     campo('Dal', '<input type="date" id="as-dal">') + campo('Al', '<input type="date" id="as-al">') +
@@ -2310,6 +2407,8 @@ function collegaBarra() {
       .catch(function (err) { m.hidden = false; m.textContent = err.message })
       .then(function () { loginInCorso = false; tasto.disabled = false })
   })
+  // v11: il tasto dell'archivio è in più punti (barra, finestre, Impostazioni)
+  document.addEventListener('click', function (e) { if (e.target.closest && e.target.closest('.tasto-archivio')) cambiaArchivio() })
   // Clic nella griglia: cella → Assegna; testata → scheda commessa
   $('griglia').addEventListener('click', function (e) {
     var b = e.target.closest('[data-apri-commessa]')

@@ -6,20 +6,20 @@
   <title>Calendario · Carpenteria Ticinese</title>
   <!-- ?v= : forza il browser a riprendere CSS/JS aggiornati (niente versioni vecchie in cache) -->
   <!-- Identità (v10): nome Calendario, icona 📅, verde #2d6a4f. Installabile su PC e telefono (manifest). -->
-  <link rel="manifest" href="manifest.json?v=10" />
+  <link rel="manifest" href="manifest.json?v=11" />
   <meta name="theme-color" content="#2d6a4f" />
-  <link rel="icon" type="image/png" sizes="32x32" href="icone/icona-32.png?v=10" />
-  <link rel="apple-touch-icon" href="icone/icona-180.png?v=10" />
+  <link rel="icon" type="image/png" sizes="32x32" href="icone/icona-32.png?v=11" />
+  <link rel="apple-touch-icon" href="icone/icona-180.png?v=11" />
   <meta name="apple-mobile-web-app-title" content="Calendario" />
-  <link rel="stylesheet" href="css/style.css?v=10" />
+  <link rel="stylesheet" href="css/style.css?v=11" />
 </head>
-<body data-versione="10">
+<body data-versione="11">
 
 <!-- ── Login ──────────────────────────────────────────────────────────────── -->
 <div id="schermo-login" class="schermo" hidden>
   <form id="form-login" class="scheda-login" autocomplete="on" novalidate>
     <div class="titolo-app">
-      <img src="icone/icona-192.png?v=10" alt="" class="icona-login" />
+      <img src="icone/icona-192.png?v=11" alt="" class="icona-login" />
       <h1>Calendario</h1>
     </div>
     <p class="sotto">Piano dei cantieri · Carpenteria Ticinese Sagl · solo titolare e responsabile</p>
@@ -29,7 +29,7 @@
     <label for="login-password">Password</label>
     <input id="login-password" type="password" autocomplete="current-password" required />
     <button type="submit" class="primario grande">Entra</button>
-    <p class="sotto piccola-versione">versione 10</p>
+    <p class="sotto piccola-versione">versione 11</p>
   </form>
 </div>
 
@@ -48,7 +48,7 @@
 <!-- ── App ────────────────────────────────────────────────────────────────── -->
 <div id="app" hidden>
   <header id="barra" aria-label="Barra comandi">
-    <div class="marchio"><img src="icone/icona-192.png?v=10" alt="" /> <span class="nome-app">Calendario</span> <span class="versione">v10</span></div>
+    <div class="marchio"><img src="icone/icona-192.png?v=11" alt="" /> <span class="nome-app">Calendario</span> <span class="versione">v11</span></div>
 
     <div class="segmenti" role="group" aria-label="Vista">
       <button type="button" class="seg" data-vista="cantieri" aria-pressed="true">🏗️ Cantieri</button>
@@ -81,6 +81,7 @@
   <div id="avviso-meteo" class="striscia-avviso" hidden></div>
   <div id="avviso-titolare" class="striscia-avviso" hidden></div>
   <div id="avviso-persone" class="striscia-avviso" hidden></div>
+  <div id="barra-archivio" hidden></div>
 
   <main id="pagina-piano">
     <div id="contenitore-griglia" aria-label="Piano">
@@ -99,14 +100,14 @@
 <div id="toast" role="status" aria-live="polite"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="js/config.js?v=10"></script>
-<script src="js/calcoli.js?v=10"></script>
-<script src="js/viaggio.js?v=10"></script>
-<script src="js/dati.js?v=10"></script>
+<script src="js/config.js?v=11"></script>
+<script src="js/calcoli.js?v=11"></script>
+<script src="js/viaggio.js?v=11"></script>
+<script src="js/dati.js?v=11"></script>
 <!-- v4 «Carica offerta Excel»: SheetJS in locale (mai da internet), copia del lettore del Preventivatore, ore per capitolo -->
-<script src="lib/xlsx-0.20.3.full.min.js?v=10"></script>
-<script src="js/importa_offerta.js?v=10"></script>
-<script src="js/offerta_ore.js?v=10"></script>
-<script src="js/app.js?v=10"></script>
+<script src="lib/xlsx-0.20.3.full.min.js?v=11"></script>
+<script src="js/importa_offerta.js?v=11"></script>
+<script src="js/offerta_ore.js?v=11"></script>
+<script src="js/app.js?v=11"></script>
 </body>
 </html>
