@@ -865,9 +865,44 @@
   // ── Commesse da Anagrafiche (tabella cantieri) ────────────────────────────
   // Il Calendario LEGGE nome, numero, indirizzo e stato_commessa da cantieri e
   // non li scrive mai. pl_commesse tiene solo i dati del piano (cantiere_id).
-  var STATI_PIANIFICABILI = ['Da fare', 'Inviata', 'In corso']
-  var STATI_CHIUSI = ['Persa', 'Conclusa']
   function pulito(s) { return s === null || s === undefined ? '' : String(s).replace(/\s+/g, ' ').trim() }
+
+  // ── Stati della commessa (cantieri.stato_commessa, di Anagrafiche) — UN POSTO SOLO (v12) ──
+  // Umberto 9.11.2026: a schermo sempre icona + parola + colore (classe CSS «sc-<chiave>»),
+  // mai la parola del database da sola («Da fare» non dice se è l'offerta o il lavoro).
+  //   valori: come sono scritti nel database (si confrontano senza maiuscole né spazi doppi);
+  //           vale anche la parola stessa (es. «Lavoro in corso»).
+  //   gruppo: 'lavoro'  → nell'elenco «📋 Da pianificare» (anche senza date);
+  //           'offerta' → non in elenco, si trova con la ricerca;
+  //           'chiuso'  → Persa / Lavoro finito.
+  // «Lavoro da iniziare» oggi NON ha un valore nel database (arriverà con uno SQL di Anagrafiche):
+  // quando arriva, scriverlo in `valori` qui sotto. Anche prima entra da solo nell'elenco:
+  // lo riconosce la parola («... da iniziare»), e OGNI valore nuovo che non è in questa lista
+  // conta come lavoro (❔ + la sua parola del database): meglio visto in più che nascosto.
+  var STATI_COMMESSA = [
+    { chiave: 'offerta_da_fare', valori: ['Da fare'], icona: '📝', parola: 'Offerta da fare', gruppo: 'offerta' },
+    { chiave: 'offerta_inviata', valori: ['Inviata'], icona: '📤', parola: 'Offerta inviata', gruppo: 'offerta' },
+    { chiave: 'lavoro_da_iniziare', valori: [], icona: '✅', parola: 'Lavoro da iniziare', gruppo: 'lavoro', riconosci: /da\s+iniziare/i },
+    { chiave: 'lavoro_in_corso', valori: ['In corso'], icona: '🔨', parola: 'Lavoro in corso', gruppo: 'lavoro' },
+    { chiave: 'lavoro_finito', valori: ['Conclusa'], icona: '🏁', parola: 'Lavoro finito', gruppo: 'chiuso' },
+    { chiave: 'persa', valori: ['Persa'], icona: '❌', parola: 'Persa', gruppo: 'chiuso' }
+  ]
+  var TESTO_SENZA_STATO = 'Stato da mettere in Anagrafiche'
+  function normStato(s) { return pulito(s).toLowerCase() }
+  // Stato di una commessa per lo schermo: { chiave, icona, parola, gruppo, valore, nuovo }
+  function statoCommessa(valore) {
+    var v = normStato(valore)
+    if (!v) return { chiave: 'senza', icona: '⚠️', parola: TESTO_SENZA_STATO, gruppo: 'senza', valore: null, nuovo: false }
+    var s = STATI_COMMESSA.find(function (x) {
+      return x.valori.some(function (y) { return normStato(y) === v }) || normStato(x.parola) === v || (x.riconosci && x.riconosci.test(v))
+    })
+    if (s) return { chiave: s.chiave, icona: s.icona, parola: s.parola, gruppo: s.gruppo, valore: pulito(valore), nuovo: false }
+    return { chiave: 'nuovo', icona: '❔', parola: pulito(valore), gruppo: 'lavoro', valore: pulito(valore), nuovo: true }
+  }
+  function testoStato(valore) { var s = statoCommessa(valore); return s.icona + ' ' + s.parola }
+  function valoriDelGruppo(g) { return STATI_COMMESSA.filter(function (x) { return x.gruppo === g }).reduce(function (a, x) { return a.concat(x.valori) }, []) }
+  var STATI_CHIUSI = valoriDelGruppo('chiuso')          // ['Conclusa', 'Persa']: solo per chi li cercava per nome
+  var STATI_LAVORO = valoriDelGruppo('lavoro')          // oggi ['In corso']; domani anche «Lavoro da iniziare»
   function indirizzoCantiere(k) {
     if (!k) return ''
     var loc = pulito(pulito(k.cap) + ' ' + pulito(k.citta))
@@ -905,42 +940,76 @@
   // lo stato: la scheda e l'elenco dicono «Stato da mettere in Anagrafiche».
   // Regola per commessa: appena lo stato c'è, torna a valere il filtro normale.
   // Il Magazzino (interna / cantiere 'interno') non è mai «senza stato».
-  var TESTO_SENZA_STATO = 'Stato da mettere in Anagrafiche'
   function senzaStatoDaMettere(c) {
-    return !!c && !!c.collegata && !c.interna && c.cantiere_tipo !== 'interno' && !c.stato_commessa
+    return !!c && !!c.collegata && !c.interna && c.cantiere_tipo !== 'interno' && !pulito(c.stato_commessa)
   }
-  // Le commesse di Anagrafiche che si possono pianificare: tipo commessa, non ancora nel
-  // Calendario, con stato Da fare / Inviata / In corso (lista) oppure SENZA stato
-  // (listaSenzaStato, gruppo separato). Perse e Concluse non compaiono. opz.tutti: ogni stato in lista.
-  // Restituisce { lista, listaSenzaStato, senzaStato (numero), altriStati, giaPianificate }.
+  function ordinaCantieri(a, b) {
+    var na = pulito(a.numero_commessa), nb = pulito(b.numero_commessa)
+    if (na && !nb) return -1
+    if (!na && nb) return 1
+    if (na !== nb) return na < nb ? 1 : -1                  // le più nuove in alto
+    return pulito(a.nome).localeCompare(pulito(b.nome))
+  }
+  // Le commesse di Anagrafiche non ancora nel Calendario (tipo commessa), divise per gruppo di stato:
+  //   lista           = lavoro (Lavoro da iniziare, Lavoro in corso, stati nuovi): si vedono subito
+  //   offerte         = Offerta da fare / inviata: si vedono solo cercando (v12, Umberto 9.11)
+  //   listaSenzaStato = senza stato (gruppo separato, scelta A del 2.11)
+  //   altriStati      = Perse e Lavori finiti (non compaiono; solo il numero)
+  // opz.tutti: ogni stato in lista (per collegare una riga vecchia).
   function commessePianificabili(cantieri, commesse, opz) {
     var usati = {}
     ;(commesse || []).forEach(function (c) { if (c.cantiere_id) usati[c.cantiere_id] = 1 })
-    var out = { lista: [], listaSenzaStato: [], senzaStato: 0, altriStati: 0, giaPianificate: 0 }
+    var out = { lista: [], offerte: [], listaSenzaStato: [], senzaStato: 0, altriStati: 0, giaPianificate: 0 }
     ;(cantieri || []).forEach(function (k) {
       if (k.tipo === 'interno') return
       if (usati[k.id]) { out.giaPianificate++; return }
       if (opz && opz.tutti) { out.lista.push(k); return }
-      if (STATI_PIANIFICABILI.indexOf(k.stato_commessa) >= 0) out.lista.push(k)
-      else if (!pulito(k.stato_commessa)) { out.listaSenzaStato.push(k); out.senzaStato++ }
+      var g = statoCommessa(k.stato_commessa).gruppo
+      if (g === 'lavoro') out.lista.push(k)
+      else if (g === 'offerta') out.offerte.push(k)
+      else if (g === 'senza') { out.listaSenzaStato.push(k); out.senzaStato++ }
       else out.altriStati++
     })
-    function ordina(a, b) {
-      var na = pulito(a.numero_commessa), nb = pulito(b.numero_commessa)
-      if (na && !nb) return -1
-      if (!na && nb) return 1
-      if (na !== nb) return na < nb ? 1 : -1                  // le più nuove in alto
-      return pulito(a.nome).localeCompare(pulito(b.nome))
-    }
-    out.lista.sort(ordina)
-    out.listaSenzaStato.sort(ordina)
+    out.lista.sort(ordinaCantieri)
+    out.offerte.sort(ordinaCantieri)
+    out.listaSenzaStato.sort(ordinaCantieri)
     return out
   }
-  // Filtro della ricerca nella finestra «Pianifica commessa»
+  // «📋 Da pianificare» (v12): commesse di Anagrafiche con stato di LAVORO che non hanno ancora
+  // giorni nel Calendario: senza piano (piano: null) o con un piano senza assegnazioni.
+  // Esclusi: Magazzino, piani Finito, piani in `escludi` (id → riparazioni in coda, che hanno la loro lista).
+  // Restituisce [{ cantiere, piano, stato }], le più nuove in alto.
+  function daPianificare(cantieri, commesse, assegnazioni, escludi) {
+    var piano = {}, conGiorni = {}
+    ;(commesse || []).forEach(function (c) { if (c.cantiere_id) piano[c.cantiere_id] = c })
+    ;(assegnazioni || []).forEach(function (a) { conGiorni[a.commessa_id] = 1 })
+    var out = []
+    ;(cantieri || []).slice().sort(ordinaCantieri).forEach(function (k) {
+      if (k.tipo === 'interno') return
+      var s = statoCommessa(k.stato_commessa)
+      if (s.gruppo !== 'lavoro') return
+      var p = piano[k.id] || null
+      if (p && (p.interna || p.stato === 'Finito' || conGiorni[p.id] || (escludi && escludi[p.id]))) return
+      out.push({ cantiere: k, piano: p, stato: s })
+    })
+    return out
+  }
+  // Ricerca su TUTTE le commesse di Anagrafiche (offerte comprese), con il loro piano se c'è.
+  // Testo vuoto → nessun risultato. Restituisce [{ cantiere, piano, stato }].
+  function cercaCommesse(cantieri, commesse, testo) {
+    if (!pulito(testo)) return []
+    var piano = {}
+    ;(commesse || []).forEach(function (c) { if (c.cantiere_id) piano[c.cantiere_id] = c })
+    return (cantieri || []).filter(function (k) { return k.tipo !== 'interno' && cercaCantiere(k, testo) })
+      .sort(ordinaCantieri)
+      .map(function (k) { return { cantiere: k, piano: piano[k.id] || null, stato: statoCommessa(k.stato_commessa) } })
+  }
+  // Filtro della ricerca: numero, nome, indirizzo, stato (parola del database e parola nuova)
   function cercaCantiere(k, testo) {
     var t = pulito(testo).toLowerCase()
     if (!t) return true
-    var tutto = (pulito(k.numero_commessa) + ' ' + pulito(k.nome) + ' ' + indirizzoCantiere(k) + ' ' + pulito(k.stato_commessa)).toLowerCase()
+    var s = statoCommessa(k.stato_commessa)
+    var tutto = (pulito(k.numero_commessa) + ' ' + pulito(k.nome) + ' ' + indirizzoCantiere(k) + ' ' + pulito(k.stato_commessa) + ' ' + s.parola).toLowerCase()
     return t.split(' ').every(function (p) { return tutto.indexOf(p) >= 0 })
   }
   // Persone da pianificare: da operai, escluse quelle non attive e quelle con
@@ -1100,7 +1169,7 @@
       occupati: occupati, oltreFineRapporto: oltre, festiviSaltati: festiviSaltati
     }
   }
-  function commessaChiusa(c) { return !!c && (c.stato === 'Finito' || STATI_CHIUSI.indexOf(c.stato_commessa) >= 0) }
+  function commessaChiusa(c) { return !!c && (c.stato === 'Finito' || statoCommessa(c.stato_commessa).gruppo === 'chiuso') }
 
   // ── Avvisi ────────────────────────────────────────────────────────────────
   var TIPI_AVVISO = {
@@ -1121,7 +1190,7 @@
     residuoEst: { icona: '👷', etichetta: 'Ore Esterni da assegnare' },
     meteo: { icona: '🌧️', etichetta: 'Dati pioggia mancanti' },
     periodo: { icona: '🌗', etichetta: 'Cambio estate / inverno' },
-    inizio: { icona: '▶️', etichetta: 'Inizia ma non è «In corso»' },
+    inizio: { icona: '▶️', etichetta: 'Inizia ma non è «🔨 Lavoro in corso»' },
     chiusa: { icona: '🛑', etichetta: 'Commessa chiusa con giorni pianificati' },
     collega: { icona: '🔗', etichetta: 'Da collegare ad Anagrafiche' }
   }
@@ -1252,14 +1321,15 @@
         var dateC = assC.map(function (a) { return a.data }).sort()
         var primo = dateC[0], ultimo = dateC[dateC.length - 1]
         var prossimo = spostaLavorativi(cal, aggiungiGiorni(oggiC, 1), 0)
-        var statoTxt = c.stato_commessa ? '«' + c.stato_commessa + '»' : 'nessuno'
-        if (primo <= prossimo && ultimo >= oggiC && c.stato_commessa !== 'In corso') {
+        var sc = statoCommessa(c.stato_commessa)
+        var statoTxt = sc.gruppo === 'senza' ? 'nessuno' : '«' + sc.icona + ' ' + sc.parola + '»'
+        if (primo <= prossimo && ultimo >= oggiC && sc.chiave !== 'lavoro_in_corso') {
           var quando = primo > oggiC ? 'inizia ' + (primo === aggiungiGiorni(oggiC, 1) ? 'domani, ' : '') + fmtGiorno(primo)
             : primo === oggiC ? 'inizia oggi' : 'è iniziata ' + fmtGiorno(primo)
           push('inizio', 'in|' + c.id + '|' + primo + '|' + (c.stato_commessa || ''), c.numero + ' ' + c.nome + ' ' + quando +
-            ', ma in Anagrafiche non è «In corso» (stato: ' + statoTxt + '). Il Calendario non cambia lo stato: se è giusto, mettilo in Anagrafiche.', primo, { commessa_id: c.id })
+            ', ma in Anagrafiche non è «🔨 Lavoro in corso» (stato: ' + statoTxt + '). Il Calendario non cambia lo stato: se è giusto, mettilo in Anagrafiche.', primo, { commessa_id: c.id })
         }
-        if (STATI_CHIUSI.indexOf(c.stato_commessa) >= 0) {
+        if (sc.gruppo === 'chiuso') {
           var future = dateC.filter(function (d) { return d >= oggiC })
           if (future.length) {
             push('chiusa', 'ch|' + c.id + '|' + c.stato_commessa + '|' + future.length, c.numero + ' ' + c.nome + ' è ' + statoTxt + ' in Anagrafiche, ma ha ancora ' +
@@ -1496,7 +1566,8 @@
     eliminazioneCommessa: eliminazioneCommessa, capitoloRiparazione: capitoloRiparazione, opzioniPocheOre: opzioniPocheOre,
     differenzePreviste: differenzePreviste, commessaSuccessiva: commessaSuccessiva,
     // commesse da Anagrafiche
-    STATI_PIANIFICABILI: STATI_PIANIFICABILI, STATI_CHIUSI: STATI_CHIUSI, indirizzoCantiere: indirizzoCantiere,
+    STATI_COMMESSA: STATI_COMMESSA, statoCommessa: statoCommessa, testoStato: testoStato, STATI_CHIUSI: STATI_CHIUSI, STATI_LAVORO: STATI_LAVORO,
+    indirizzoCantiere: indirizzoCantiere, daPianificare: daPianificare, cercaCommesse: cercaCommesse,
     pulito: pulito, unisciCantieri: unisciCantieri, commessePianificabili: commessePianificabili, senzaStatoDaMettere: senzaStatoDaMettere, TESTO_SENZA_STATO: TESTO_SENZA_STATO, cercaCantiere: cercaCantiere,
     commessaChiusa: commessaChiusa, personeAttive: personeAttive,
     inArchivio: inArchivio, testoArchivio: testoArchivio, personeArchivio: personeArchivio, insiemeArchivio: insiemeArchivio, giornataStorica: giornataStorica,

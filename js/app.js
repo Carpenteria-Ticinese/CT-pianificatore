@@ -453,7 +453,7 @@ function disegna() {
   var ba = $('barra-archivio')
   ba.hidden = !(ST.pagina === 'piano' && ST.vista === 'persone' && ST.archivio.length)
   ba.innerHTML = ST.archivio.length ? tastoArchivio(ST.archivio.length) : ''
-  if (ST.pagina === 'piano') { disegnaGriglia(); disegnaCoda() } else disegnaImpostazioni()
+  if (ST.pagina === 'piano') { disegnaGriglia(); disegnaDaPianificare(); disegnaCoda() } else disegnaImpostazioni()
 }
 function titoloPeriodo() {
   var iv = C.intervalloVista(ST.zoom, ST.ancora)
@@ -520,7 +520,7 @@ function righeCantieri(giorni, oggi) {
       (r.esterni.nCapitoli ? ' · 👷 Esterni ' + fOre(r.esterni.orePreventivo) + (r.esterni.residue > 1e-9 ? ' (mancano ' + fOre(r.esterni.residue) + ')' : '') : ''))
     h += '<tr data-riga="' + c.id + '"><td class="testa"><button type="button" class="link" data-apri-commessa="' + c.id + '">' +
       '<span class="pallino" style="background:' + col + '"></span><span class="num">' + esc(c.numero) + '</span> ' + esc(c.nome) +
-      ' <span class="stato">' + esc(etichettaStato(c)) + (c.tipo === 'Riparazione' ? ' · Riparazione' : '') + '</span>' +
+      ' <span class="stato">' + etichettaStato(c) + (c.tipo === 'Riparazione' ? ' · Riparazione' : '') + '</span>' +
       '<span class="sottoriga">' + esc(sotto) + '</span></button></td>'
     giorni.forEach(function (d) {
       var info = C.infoGiorno(ST.cal, d)
@@ -558,15 +558,25 @@ function righeCantieri(giorni, oggi) {
   })
   return h
 }
-// Stato mostrato nella riga: quello della commessa in Anagrafiche, più lo stato del
-// piano quando conta (Bozza / Finito). Righe vecchie: lo stato del piano + «da collegare».
+// Stato mostrato nella riga (HTML): quello della commessa in Anagrafiche (icona + parola + colore),
+// più lo stato del piano quando conta (Bozza / Finito). Righe vecchie: stato del piano + «da collegare».
 function etichettaStato(c) {
   if (c.interna) return 'interna'
-  if (!c.collegata) return c.stato + ' · da collegare'
-  var s = c.stato_commessa || 'senza stato'
+  if (!c.collegata) return esc(c.stato + ' · da collegare')
+  var s = badgeStato(c.stato_commessa, { corto: true })
   if (c.stato === 'Bozza') s += ' · piano in bozza'
   else if (c.stato === 'Finito') s += ' · piano finito'
   return s
+}
+// v12 (Umberto 9.11): lo stato della commessa a schermo è sempre icona + parola + colore.
+// Le parole e i gruppi stanno in UN posto solo: C.STATI_COMMESSA (calcoli.js). Colori: CSS «.sc-<chiave>».
+//   opz.corto: senza stato → «⚠️ Senza stato» (righe strette); opz.vecchio: «prima: …» (cantieri.stato)
+function badgeStato(valore, opz) {
+  opz = opz || {}
+  var s = C.statoCommessa(valore)
+  var parola = s.gruppo === 'senza' && opz.corto ? 'Senza stato' : s.parola
+  return '<span class="badge-stato sc-' + s.chiave + (s.gruppo === 'senza' ? ' senza' : '') + '">' + s.icona + ' ' + esc(parola) + '</span>' +
+    (s.gruppo === 'senza' && opz.vecchio ? ' <span class="stato-prima">prima: ' + esc(opz.vecchio) + '</span>' : '')
 }
 function righePersone(giorni, oggi) {
   var dal = giorni[0], al = giorni[giorni.length - 1]
@@ -648,6 +658,42 @@ function righePersone(giorni, oggi) {
     h += '</tr>'
   })
   return h
+}
+
+// ── «📋 Da pianificare» (v12, Umberto 9.11.2026) ────────────────────────────
+// Senza testo: le commesse di LAVORO (✅ Lavoro da iniziare, 🔨 Lavoro in corso, stati nuovi) che non
+// hanno ancora giorni nel Calendario, anche senza piano e senza date (C.daPianificare).
+// Con testo nel campo Cerca: TUTTE le commesse di Anagrafiche, offerte comprese (C.cercaCommesse).
+// Clic: piano già aperto → scheda; senza piano → «Pianifica commessa» con la ricerca già scritta.
+function disegnaDaPianificare() {
+  var el = $('dp-lista')
+  if (!el || !ST.dati) return
+  var testo = $('dp-cerca').value || ''
+  var cerca = !!C.pulito(testo)
+  var escludi = {}; ST.coda.forEach(function (r) { escludi[r.id] = 1 })
+  var righe = cerca ? C.cercaCommesse(ST.dati.cantieri, ST.dati.commesse, testo)
+    : C.daPianificare(ST.dati.cantieri, ST.dati.commesse, ST.dati.assegnazioni, escludi)
+  var h = righe.map(function (r) {
+    var k = r.cantiere, p = r.piano
+    var giorni = p ? (ST.assPer[p.id] || []).length : 0
+    var dove = p ? (giorni ? '📅 nel Calendario' : '🗓️ piano aperto, senza giorni') : (r.stato.gruppo === 'chiuso' ? 'non si pianifica' : '➕ non ancora nel Calendario')
+    var chiusa = !p && r.stato.gruppo === 'chiuso'
+    var ind = C.indirizzoCantiere(k)
+    return '<button type="button" class="carta-dp' + (chiusa ? ' chiusa' : '') + '"' + (chiusa ? ' disabled' : '') +
+      ' data-dp-cantiere="' + k.id + '"' + (p ? ' data-dp-piano="' + p.id + '"' : '') + '>' +
+      '<strong><span class="num">' + esc(k.numero_commessa || 'senza numero') + '</span> ' + esc(k.nome) + '</strong>' +
+      '<span class="dp-sotto">' + badgeStato(k.stato_commessa, { corto: true }) + ' <span class="dp-dove">' + dove + '</span></span>' +
+      (ind ? '<span class="piccolo-testo">' + esc(ind) + '</span>' : '') + '</button>'
+  }).join('')
+  if (!righe.length) h = '<p class="aiuto">' + (cerca ? 'Nessuna commessa con «' + esc(testo) + '».' : 'Nessun lavoro da pianificare (✅ Lavoro da iniziare / 🔨 Lavoro in corso senza giorni).') + '</p>'
+  if (!cerca) {
+    var pc = C.commessePianificabili(ST.dati.cantieri, ST.dati.commesse)
+    var resto = []
+    if (pc.offerte.length) resto.push('📝 📤 ' + pc.offerte.length + (pc.offerte.length === 1 ? ' offerta' : ' offerte'))
+    if (pc.senzaStato) resto.push('⚠️ ' + pc.senzaStato + ' senza stato')
+    if (resto.length) h += '<p class="aiuto dp-nota">Non in elenco: ' + resto.join(' · ') + '. Cercale qui sopra.</p>'
+  }
+  el.innerHTML = h
 }
 
 // ── Riparazioni in coda ─────────────────────────────────────────────────────
@@ -937,10 +983,12 @@ function apriCommessa(id) {
 }
 
 // ── «Pianifica commessa»: si sceglie fra le commesse di Anagrafiche ──────────
-// Stato Da fare / Inviata / In corso, non ancora nel Calendario. Si crea SOLO la
-// riga del piano (cantiere_id, tipo, stato del piano, colore): nome, numero e
-// indirizzo restano in Anagrafiche.
-async function apriPianifica() {
+// v12 (Umberto 9.11): si vedono subito le commesse di LAVORO (✅ Lavoro da iniziare, 🔨 Lavoro in
+// corso) e quelle senza stato; le OFFERTE (📝 da fare, 📤 inviata) solo scrivendo nel campo Cerca.
+// Si crea SOLO la riga del piano (cantiere_id, tipo, stato del piano, colore): nome, numero e
+// indirizzo restano in Anagrafiche. opz.cerca: testo già scritto nel campo (da «Da pianificare»).
+async function apriPianifica(opz) {
+  opz = opz || {}
   if (!(ST.dati.versioneDb >= 2)) {
     mostraErrore('«Pianifica commessa» non è ancora disponibile: nel database manca l’SQL PL_02 (commesse da Anagrafiche). Niente è stato creato. Il resto del Calendario funziona.')
     return
@@ -951,28 +999,29 @@ async function apriPianifica() {
   function disegnaElenco() {
     var pc = C.commessePianificabili(ST.dati.cantieri, ST.dati.commesse)
     var testo = (w.corpo.querySelector('#pc-cerca') || {}).value || ''
+    var cerca = !!C.pulito(testo)
     var lista = pc.lista.filter(function (k) { return C.cercaCantiere(k, testo) })
+    var offerte = cerca ? pc.offerte.filter(function (k) { return C.cercaCantiere(k, testo) }) : []
     var el = w.corpo.querySelector('#pc-lista')
     var senza = pc.listaSenzaStato.filter(function (k) { return C.cercaCantiere(k, testo) })
     function voce(k, senzaStato) {
       var ind = C.indirizzoCantiere(k)
-      var vecchio = C.pulito ? C.pulito(k.stato) : String(k.stato || '').trim()
       return '<button type="button" class="voce-commessa' + (senzaStato ? ' senza-stato' : '') + '" data-scegli="' + k.id + '">' +
         '<span class="vc-riga"><span class="num">' + esc(k.numero_commessa || 'senza numero') + '</span> <strong>' + esc(k.nome) + '</strong></span>' +
-        '<span class="vc-sotto">' + (senzaStato
-          ? '<span class="badge-stato senza">⚠️ ' + esc(C.TESTO_SENZA_STATO) + '</span>' + (vecchio ? ' <span class="stato-prima">prima: ' + esc(vecchio) + '</span>' : '')
-          : '<span class="badge-stato">' + esc(k.stato_commessa) + '</span>') +
+        '<span class="vc-sotto">' + badgeStato(k.stato_commessa, { vecchio: C.pulito(k.stato) }) +
         (ind ? ' ' + esc(ind) : ' <em>indirizzo mancante</em>') + '</span></button>'
     }
-    if (!pc.lista.length && !pc.listaSenzaStato.length) el.innerHTML = '<div class="esito attenzione">Nessuna commessa da pianificare: in Anagrafiche non ci sono commesse «Da fare», «Inviata» o «In corso» che non siano già nel Calendario.</div>'
-    else if (!lista.length && !senza.length) el.innerHTML = '<div class="esito attenzione">Nessuna commessa con «' + esc(testo) + '».</div>'
+    if (!pc.lista.length && !pc.listaSenzaStato.length && !offerte.length) el.innerHTML = '<div class="esito attenzione">Nessun lavoro da pianificare: in Anagrafiche non ci sono commesse «✅ Lavoro da iniziare» o «🔨 Lavoro in corso» che non siano già nel Calendario.' +
+      (pc.offerte.length && !cerca ? ' Le offerte (📝 / 📤) si trovano scrivendo nel campo Cerca.' : '') + '</div>'
+    else if (!lista.length && !senza.length && !offerte.length) el.innerHTML = '<div class="esito attenzione">Nessuna commessa con «' + esc(testo) + '».</div>'
     else el.innerHTML = lista.map(function (k) { return voce(k, false) }).join('') +
+      (offerte.length ? '<h4 class="gruppo-offerte">📝 📤 Offerte trovate (' + offerte.length + ')</h4>' + offerte.map(function (k) { return voce(k, false) }).join('') : '') +
       (senza.length ? '<h4 class="gruppo-senza-stato">⚠️ ' + esc(C.TESTO_SENZA_STATO) + ' (' + senza.length + ')</h4>' +
         '<p class="aiuto">Queste commesse non hanno ancora lo stato. Si può pianificarle lo stesso; lo stato si mette in Anagrafiche e poi questo gruppo sparisce da solo.</p>' +
         senza.map(function (k) { return voce(k, true) }).join('') : '')
-    w.corpo.querySelector('#pc-nota').textContent = 'Elenco da Anagrafiche: ' + pc.lista.length + ' con stato' + (pc.listaSenzaStato.length ? ' + ' + pc.listaSenzaStato.length + ' senza stato' : '') +
-      ' · ' + pc.giaPianificate + ' già nel Calendario' + (pc.altriStati ? ' · ' + pc.altriStati + ' Perse o Concluse (non compaiono)' : '') +
-      '. Con stato: «Da fare», «Inviata» o «In corso».'
+    w.corpo.querySelector('#pc-nota').textContent = 'Elenco da Anagrafiche: ' + pc.lista.length + ' lavori' + (pc.listaSenzaStato.length ? ' + ' + pc.listaSenzaStato.length + ' senza stato' : '') +
+      ' · ' + pc.offerte.length + ' offerte (si vedono cercando)' +
+      ' · ' + pc.giaPianificate + ' già nel Calendario' + (pc.altriStati ? ' · ' + pc.altriStati + ' perse o finite (non compaiono)' : '') + '.'
     el.querySelectorAll('[data-scegli]').forEach(function (b) {
       b.addEventListener('click', function () { esegui(function () { return creaPiano(b.dataset.scegli) }) })
     })
@@ -1002,6 +1051,7 @@ async function apriPianifica() {
       w.corpo.querySelectorAll('[data-tipo]').forEach(function (x) { x.classList.toggle('attivo', x === b) })
     })
   })
+  if (opz.cerca) w.corpo.querySelector('#pc-cerca').value = opz.cerca
   disegnaElenco()
   w.corpo.querySelector('#pc-cerca').focus()
 }
@@ -1024,7 +1074,7 @@ function disegnaScheda(w, c) {
     campo('Data inizio prevista', '<input id="sc-inizio" type="date" value="' + esc(c.data_inizio || '') + '">') +
     campo('Persone previste', '<input id="sc-persone" type="text" inputmode="numeric" value="' + esc(c.persone_previste || '') + '">', 'persone') +
     campo('Colore nel piano', '<input id="sc-colore" type="color" value="' + esc(c.colore || '#2d6a4f') + '">') +
-    '</div><p class="aiuto">Stato del piano: Bozza = in preparazione · Confermato = si salva la copia «previsto» · Finito = lavori finiti. Lo stato della commessa (Da fare, In corso…) si cambia in Anagrafiche.</p></div>'
+    '</div><p class="aiuto">Stato del piano: Bozza = in preparazione · Confermato = si salva la copia «previsto» · Finito = lavori finiti. Lo stato della commessa (📝 Offerta da fare, 🔨 Lavoro in corso…) si cambia in Anagrafiche.</p></div>'
 
   h += '<div class="sezione"><h3>🚗 Viaggio (andata)</h3><div class="campi">' +
     campo('Minuti di viaggio, andata', '<input id="sc-viaggio" type="text" inputmode="numeric" value="' + esc(c.viaggio_min_andata === null || c.viaggio_min_andata === undefined ? '' : c.viaggio_min_andata) + '">', 'min') +
@@ -1060,9 +1110,7 @@ function sezioneAnagrafica(c) {
   if (c.collegata) {
     return h + '<div class="riquadro"><dl><dt>Numero</dt><dd>' + esc(c.numero) + '</dd><dt>Nome</dt><dd>' + esc(c.nome) + '</dd>' +
       '<dt>Indirizzo</dt><dd>' + (c.indirizzo ? esc(c.indirizzo) : '<strong>mancante</strong>') + '</dd>' +
-      '<dt>Stato commessa</dt><dd>' + (C.senzaStatoDaMettere(c)
-        ? '<span class="badge-stato senza">⚠️ ' + esc(C.TESTO_SENZA_STATO) + '</span>' + (c.stato_vecchio ? ' <span class="stato-prima">prima: ' + esc(c.stato_vecchio) + '</span>' : '')
-        : '<span class="badge-stato">' + esc(c.stato_commessa || 'senza stato') + '</span>') + '</dd></dl></div>' +
+      '<dt>Stato commessa</dt><dd>' + (c.cantiere_tipo === 'interno' && !c.stato_commessa ? 'interna' : badgeStato(c.stato_commessa, { vecchio: c.stato_vecchio })) + '</dd></dl></div>' +
       '<p class="aiuto">Si cambiano in Anagrafiche. Il Calendario li legge soltanto.</p></div>'
   }
   // riga vecchia (versione 2) o commessa non più trovata: si collega
@@ -1070,7 +1118,7 @@ function sezioneAnagrafica(c) {
   h += '<div class="esito attenzione">' + (c.cantiereMancante ? '⚠️ La commessa collegata non si trova più in Anagrafiche.' : '⚠️ Questo piano non è collegato a una commessa di Anagrafiche.') +
     ' Dati vecchi: <strong>' + esc(c.numero + ' ' + c.nome) + '</strong>' + (c.indirizzo ? ' · ' + esc(c.indirizzo) : '') + '.</div>' +
     '<div class="campi" style="margin-top:10px">' + campo('Collega alla commessa di Anagrafiche', '<select id="sc-collega"><option value="">— scegli —</option>' +
-      pc.lista.map(function (k) { return '<option value="' + k.id + '">' + esc((k.numero_commessa || 'senza numero') + ' · ' + k.nome + (k.stato_commessa ? ' (' + k.stato_commessa + ')' : '')) + '</option>' }).join('') + '</select>') + '</div>' +
+      pc.lista.map(function (k) { return '<option value="' + k.id + '">' + esc((k.numero_commessa || 'senza numero') + ' · ' + k.nome + ' (' + C.testoStato(k.stato_commessa) + ')') + '</option>' }).join('') + '</select>') + '</div>' +
     '<div class="riga-bottoni"><button type="button" class="primario" id="sc-collega-ok">🔗 Collega</button></div>' +
     '<p class="aiuto">Dopo il collegamento nome, numero e indirizzo si leggono da Anagrafiche. Il piano (capitoli, giorni, persone) resta uguale.</p></div>'
   return h
@@ -2420,6 +2468,15 @@ function collegaBarra() {
       var k = td.dataset.persona
       apriAssegna({ data: td.dataset.data, chiave: k, commessa_id: k.indexOf('s:') === 0 ? k.split(':')[1] : null })
     }
+  })
+  // v12: «📋 Da pianificare» (ricerca: anche le offerte)
+  $('dp-cerca').addEventListener('input', disegnaDaPianificare)
+  $('dp-lista').addEventListener('click', function (e) {
+    var b = e.target.closest('[data-dp-cantiere]')
+    if (!b || b.disabled) return
+    if (b.dataset.dpPiano) { apriCommessa(b.dataset.dpPiano); return }
+    var k = ST.dati.cantieri.find(function (x) { return x.id === b.dataset.dpCantiere })
+    if (k) esegui(function () { return apriPianifica({ cerca: C.pulito(k.numero_commessa) || C.pulito(k.nome) }) })
   })
   $('coda-lista').addEventListener('click', function (e) {
     var cc = e.target.closest('[data-commessa]'); if (cc) apriCommessa(cc.dataset.commessa)
