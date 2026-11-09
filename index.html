@@ -6,20 +6,20 @@
   <title>Calendario · Carpenteria Ticinese</title>
   <!-- ?v= : forza il browser a riprendere CSS/JS aggiornati (niente versioni vecchie in cache) -->
   <!-- Identità (v10): nome Calendario, icona 📅, verde #2d6a4f. Installabile su PC e telefono (manifest). -->
-  <link rel="manifest" href="manifest.json?v=12" />
+  <link rel="manifest" href="manifest.json?v=13" />
   <meta name="theme-color" content="#2d6a4f" />
-  <link rel="icon" type="image/png" sizes="32x32" href="icone/icona-32.png?v=12" />
-  <link rel="apple-touch-icon" href="icone/icona-180.png?v=12" />
+  <link rel="icon" type="image/png" sizes="32x32" href="icone/icona-32.png?v=13" />
+  <link rel="apple-touch-icon" href="icone/icona-180.png?v=13" />
   <meta name="apple-mobile-web-app-title" content="Calendario" />
-  <link rel="stylesheet" href="css/style.css?v=12" />
+  <link rel="stylesheet" href="css/style.css?v=13" />
 </head>
-<body data-versione="12">
+<body data-versione="13">
 
 <!-- ── Login ──────────────────────────────────────────────────────────────── -->
 <div id="schermo-login" class="schermo" hidden>
   <form id="form-login" class="scheda-login" autocomplete="on" novalidate>
     <div class="titolo-app">
-      <img src="icone/icona-192.png?v=12" alt="" class="icona-login" />
+      <img src="icone/icona-192.png?v=13" alt="" class="icona-login" />
       <h1>Calendario</h1>
     </div>
     <p class="sotto">Piano dei cantieri · Carpenteria Ticinese Sagl · solo titolare e responsabile</p>
@@ -29,7 +29,7 @@
     <label for="login-password">Password</label>
     <input id="login-password" type="password" autocomplete="current-password" required />
     <button type="submit" class="primario grande">Entra</button>
-    <p class="sotto piccola-versione">versione 12</p>
+    <p class="sotto piccola-versione">versione 13</p>
   </form>
 </div>
 
@@ -48,7 +48,7 @@
 <!-- ── App ────────────────────────────────────────────────────────────────── -->
 <div id="app" hidden>
   <header id="barra" aria-label="Barra comandi">
-    <div class="marchio"><img src="icone/icona-192.png?v=12" alt="" /> <span class="nome-app">Calendario</span> <span class="versione">v12</span></div>
+    <div class="marchio"><img src="icone/icona-192.png?v=13" alt="" /> <span class="nome-app">Calendario</span> <span class="versione">v13</span></div>
 
     <div class="segmenti" role="group" aria-label="Vista">
       <button type="button" class="seg" data-vista="cantieri" aria-pressed="true">🏗️ Cantieri</button>
@@ -108,14 +108,18 @@
 <div id="toast" role="status" aria-live="polite"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="js/config.js?v=12"></script>
-<script src="js/calcoli.js?v=12"></script>
-<script src="js/viaggio.js?v=12"></script>
-<script src="js/dati.js?v=12"></script>
+<script src="js/config.js?v=13"></script>
+<script src="js/calcoli.js?v=13"></script>
+<script src="js/viaggio.js?v=13"></script>
+<script src="js/dati.js?v=13"></script>
 <!-- v4 «Carica offerta Excel»: SheetJS in locale (mai da internet), copia del lettore del Preventivatore, ore per capitolo -->
-<script src="lib/xlsx-0.20.3.full.min.js?v=12"></script>
-<script src="js/importa_offerta.js?v=12"></script>
-<script src="js/offerta_ore.js?v=12"></script>
-<script src="js/app.js?v=12"></script>
+<script src="lib/xlsx-0.20.3.full.min.js?v=13"></script>
+<script src="js/importa_offerta.js?v=13"></script>
+<script src="js/offerta_ore.js?v=13"></script>
+<script src="js/app.js?v=13"></script>
+<!-- v13 (Umberto, 9.11.2026): mai versioni vecchie bloccate. aggiorna.js è lo stesso file in tutte le app: NON si modifica.
+     Le due cose del Calendario (avviso dati non salvati, altezza della fascia in --ct-agg-h) sono in js/app.js, «Nuova versione».
+     A ogni versione: stesso numero in versione.json, data-versione, ?v= e PL_CONFIG.VERSIONE. -->
+<script src="aggiorna.js?v=13" data-versione="13"></script>
 </body>
 </html>

@@ -425,3 +425,14 @@ button.carta-dp.chiusa { border-left-color: var(--border); opacity: .75; cursor:
 .carta-dp .dp-sotto { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; font-size: .9rem; color: var(--text2); }
 .carta-dp .piccolo-testo { font-size: .85rem; color: var(--text2); }
 .dp-nota { margin-top: 10px; }
+
+/* ── Versione 13: fascia «🔄 Nuova versione: aggiorna» (aggiorna.js, uguale in tutte le app) ──
+   La fascia resta in alto. La barra comandi e le finestre scendono sotto la fascia, non ci finiscono sotto.
+   --ct-agg-h = altezza della fascia (0 se non c'è): la scrive js/app.js, sezione «Nuova versione». */
+#barra { top: var(--ct-agg-h, 0px); }
+.sfondo-modale { top: var(--ct-agg-h, 0px); }
+#contenitore-griglia, #coda { max-height: calc(100vh - 140px - var(--ct-agg-h, 0px)); }
+@media (max-width: 1000px) {
+  #coda { max-height: none; }
+  #contenitore-griglia { max-height: calc(70vh - var(--ct-agg-h, 0px)); }
+}

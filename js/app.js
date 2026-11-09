@@ -2487,6 +2487,51 @@ function collegaBarra() {
   })
   avviaTrascinamento()
 }
+// ── Nuova versione (v13) ────────────────────────────────────────────────────
+// Regola di Umberto (9.11.2026): mai versioni vecchie bloccate. aggiorna.js (uguale in tutte le app, NON si
+// modifica) legge versione.json e mostra in alto «🔄 Nuova versione: aggiorna». Qui solo le due cose del Calendario:
+// 1. «Aggiorna» con dati non salvati (una finestra aperta: scheda commessa, Pianifica, Assegna, conferme…;
+//    oppure Impostazioni toccate) prima avvisa «Hai dati non salvati: salvali prima.».
+//    Avviso, non blocco: «Aggiorna lo stesso» ricarica (quello non salvato si perde).
+// 2. L'altezza della fascia va in --ct-agg-h: barra comandi e finestre scendono sotto la fascia (css, v13).
+var AGG = { lasciaPassare: false, w: null }
+function datiNonSalvati() {
+  if (!$('app') || $('app').hidden) return false          // login o schermata di blocco: niente da perdere
+  if (_finestre.length) return true
+  return ST.pagina === 'impostazioni' && H.impSporche
+}
+function avvisoAggiorna(tasto) {
+  if (AGG.w && _finestre.indexOf(AGG.w) >= 0) return     // l'avviso è già aperto
+  var w = AGG.w = apriFinestra('Nuova versione', { centro: true, piccola: true })
+  w.corpo.innerHTML = '<p class="agg-avviso"><strong>Hai dati non salvati: salvali prima.</strong></p>' +
+    '<p>Se aggiorni adesso, quello che non hai salvato si perde.</p>' +
+    '<div class="riga-bottoni"><button type="button" class="primario" data-agg-torna>✍️ Torno a salvarli</button>' +
+    '<button type="button" class="pericolo" data-agg-lo-stesso>🔄 Aggiorna lo stesso</button></div>'
+  w.corpo.querySelector('[data-agg-torna]').addEventListener('click', function () { w.chiudi() })
+  w.corpo.querySelector('[data-agg-lo-stesso]').addEventListener('click', function () {
+    w.corpo.querySelectorAll('button').forEach(function (b) { b.disabled = true })
+    w.corpo.querySelector('[data-agg-lo-stesso]').textContent = '🔄 Aggiorno…'
+    AGG.lasciaPassare = true
+    tasto.click()                                          // lo stesso tasto di aggiorna.js: questa volta passa
+  })
+  w.corpo.querySelector('[data-agg-torna]').focus()        // Invio = tornare a salvare, mai perdere i dati per sbaglio
+}
+// Fase di cattura su window: arriva prima del tasto di aggiorna.js. Senza dati non salvati non fa niente.
+window.addEventListener('click', function (e) {
+  var tasto = e.target && e.target.closest ? e.target.closest('#ct-aggiorna-tasto') : null
+  if (!tasto) return
+  if (AGG.lasciaPassare) { AGG.lasciaPassare = false; return }
+  if (!datiNonSalvati()) return
+  e.stopImmediatePropagation(); e.preventDefault()
+  avvisoAggiorna(tasto)
+}, true)
+function misuraFasciaAgg() {
+  var b = document.getElementById('ct-aggiorna')
+  document.documentElement.style.setProperty('--ct-agg-h', (b ? b.offsetHeight : 0) + 'px')
+}
+if (window.MutationObserver && document.body) new MutationObserver(misuraFasciaAgg).observe(document.body, { childList: true })
+window.addEventListener('resize', misuraFasciaAgg)
+
 async function avvio() {
   // v6: la scritta del login segue sempre PL_CONFIG (nella v5 era rimasta «versione 4»)
   document.querySelectorAll('.piccola-versione').forEach(function (p) { p.textContent = 'versione ' + PL_CONFIG.VERSIONE })
