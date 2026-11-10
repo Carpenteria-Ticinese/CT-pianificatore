@@ -1027,7 +1027,7 @@
   // GRUPPI in quest'ordine: in corso, da iniziare, offerte inviate, offerte da fare, rimandate, (altro), finiti, perse.
   // Dentro ogni gruppo: per data d'inizio, quelle senza date in fondo al gruppo.
   // Filtri (o): stati (lista di chiavi di FILTRI_STATO_ELENCO; mancante = STATI_ELENCO_BASE), periodo ('tutto' |
-  // 'mese' | '4mesi'; capisce anche 'da_oggi' e 'Nmesi'), persona (operai.id), cerca (testo). Scrivendo nel campo
+  // 'mese' | '4mesi' a mesi interi; capisce anche 'da_oggi' e 'Nmesi'), persona (operai.id), cerca (testo). Scrivendo nel campo
   // Cerca si trovano anche Lavori finiti e Perse (l'archivio) non spuntati. Le commesse senza date non hanno un
   // periodo: restano sempre (in fondo al loro gruppo), non con il filtro Persona (non hanno persone).
   var STATO_DA_COLLEGARE = { chiave: 'da_collegare', icona: '🔗', parola: 'Da collegare ad Anagrafiche', gruppo: 'senza', valore: null, nuovo: false }
@@ -1063,10 +1063,11 @@
     return { testo: '', stato: 'manca' }
   }
   function localitaDi(k) { return k ? (pulito(k.citta) || pulito(k.luogo)) : '' }
-  function piuMesi(iso, n) {
-    var a = anno(iso), m = mese(iso) + n, g = +iso.slice(8, 10)
+  // Ultimo giorno del mese che viene n mesi dopo quello di iso (n = 0: fine di questo mese). v16: «Prossimi 4 mesi» a mesi interi.
+  function fineMeseDopo(iso, n) {
+    var a = anno(iso), m = mese(iso) + n
     a += Math.floor((m - 1) / 12); m = ((m - 1) % 12 + 12) % 12 + 1
-    return isoDa(a, m, Math.min(g, giorniNelMese(a, m)))
+    return isoDa(a, m, giorniNelMese(a, m))
   }
   function titoloMese(chiave) {
     var m = MESI[+chiave.slice(5, 7)]
@@ -1086,13 +1087,16 @@
     if (stati.indexOf(r.filtro) >= 0) return true
     return !!svela && STATI_ARCHIVIO_ELENCO.indexOf(r.filtro) >= 0
   }
-  // Dal… al… di un periodo (null = tutte le date)
+  // Dal… al… di un periodo (null = tutte le date). Sempre a MESI INTERI (v16, Umberto 10.11.2026):
+  // «Questo mese» = dal giorno 1 all'ultimo giorno del mese; «Prossimi 4 mesi» ('4mesi') = questo mese più i 3 dopo,
+  // dal giorno 1 di questo mese all'ultimo giorno del terzo mese dopo (il 10.11.2026: dal 01.11.2026 al 28.02.2027).
   function intervalloPeriodoElenco(per, oggi) {
     if (!per || per === 'tutto') return null
     if (per === 'da_oggi') return { dal: oggi, al: '9999-12-31' }
-    if (per === 'mese') return { dal: oggi.slice(0, 8) + '01', al: oggi.slice(0, 8) + String(giorniNelMese(anno(oggi), mese(oggi))).padStart(2, '0') }
-    var m = /^(\d+)mesi$/.exec(per)
-    return m ? { dal: oggi, al: piuMesi(oggi, +m[1]) } : null
+    var n = per === 'mese' ? 1 : 0, m = /^(\d+)mesi$/.exec(per)
+    if (m) n = +m[1]
+    if (n < 1) return null
+    return { dal: oggi.slice(0, 8) + '01', al: fineMeseDopo(oggi, n - 1) }
   }
   function passaPeriodoElenco(r, per, oggi) {
     var iv = intervalloPeriodoElenco(per, oggi)
