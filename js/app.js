@@ -12,6 +12,9 @@
    ditta, assegnati solo a mano (pannello Assegna, trascinare).
    v14: terza vista «📋 Elenco» (ST.vista = 'elenco'): tutte le commesse in righe,
    per data d'inizio, con filtri, ricerca e stampa A4 (sezione «Elenco»).
+   v15: spunte degli stati e gruppi nell'ordine di Umberto; «✏️ Cambia stato» della
+   commessa SOLO con la funzione di Anagrafiche (sezione «Cambia stato»): il
+   Calendario non scrive mai su cantieri. Il vecchio cantieri.stato non si usa più.
    ═══════════════════════════════════════════════════════════════════════════ */
 'use strict'
 var C = window.PLC, V = window.PLViaggio, D = window.PLD
@@ -22,8 +25,9 @@ var ST = {
   vista: 'cantieri', zoom: 'mese', ancora: C.oggiIso(), pagina: 'piano', mostraArchivio: false,
   cal: null, nomi: {}, persone: [], esterni: [], esterniSet: {}, perId: {}, capPer: {}, assPer: {}, rie: {},
   meteoMap: {}, magazzino: null, coda: [], avvisi: [],
-  // v14 · filtri della vista «📋 Elenco»: restano quando si cambia vista (e nella sessione del browser)
-  elenco: { cerca: '', stato: 'aperte', periodo: 'tutto', persona: '' }
+  // v14 · filtri della vista «📋 Elenco»: restano quando si cambia vista. v15: spunte degli stati e periodo
+  // ricordati sul dispositivo (localStorage), ricerca e persona solo nella sessione del browser.
+  elenco: { cerca: '', stati: null, periodo: 'tutto', persona: '' }
 }
 var PALETTE = ['#2d6a4f', '#1d4ed8', '#b45309', '#7c3aed', '#be123c', '#0f766e', '#4d7c0f', '#c2410c', '#0369a1', '#a21caf']
 var STAZIONI = { MAG: 'Magadino', LUG: 'Lugano' }
@@ -356,6 +360,7 @@ async function ricarica(nomi) {
   for (var i = 0; i < nomi.length; i++) {
     if (nomi[i] !== 'cantieri') { ST.dati[nomi[i]] = r[i]; continue }
     ST.dati.cantieri = r[i].cantieri; ST.dati.senzaCliente = r[i].senzaCliente
+    ST.dati.senzaNota = r[i].senzaNota; ST.dati.senzaPeriodo = r[i].senzaPeriodo
     var cl = await D.leggiClienti(r[i].cantieri)
     ST.dati.clienti = cl.clienti; ST.dati.erroreClienti = cl.errore
   }
@@ -398,6 +403,9 @@ function ricostruisci() {
     .map(function (o) { return { id: o.id, nome: ST.nomi[o.id], rapporto: C.eEsterno(o) ? 'esterno' : 'dipendente', testo: C.testoArchivio(o, oggi), etichetta: C.eEsterno(o) ? C.etichettaEsterno(o, d.ditte) : '' } })
     .sort(perNome)
   ST.titolariMancanti = titolariNonInOperai()
+  // v15: senza le colonne di ANAG_12 il database non ha ancora la funzione «cambia stato» → tasto disattivato
+  if (d.senzaNota) ST.statoFunzione = 'manca'
+  else if (ST.statoFunzione !== 'manca') ST.statoFunzione = ST.statoFunzione || 'si'
   ST.perId = {}; d.commesse.forEach(function (c) { ST.perId[c.id] = c })
   ST.capPer = {}; d.capitoli.forEach(function (x) { (ST.capPer[x.commessa_id] = ST.capPer[x.commessa_id] || []).push(x) })
   ST.assPer = {}; d.assegnazioni.forEach(function (x) { (ST.assPer[x.commessa_id] = ST.assPer[x.commessa_id] || []).push(x) })
@@ -470,7 +478,8 @@ function disegna() {
   var ba = $('barra-archivio')
   ba.hidden = !(ST.pagina === 'piano' && ST.vista === 'persone' && ST.archivio.length)
   ba.innerHTML = ST.archivio.length ? tastoArchivio(ST.archivio.length) : ''
-  if (ST.pagina === 'piano') { if (elenco) disegnaElenco(); else { disegnaGriglia(); disegnaDaPianificare(); disegnaCoda() } } else disegnaImpostazioni()
+  $('striscia-da-programmare').hidden = !(ST.pagina === 'piano' && !elenco)      // v15: numero dei lavori da programmare
+  if (ST.pagina === 'piano') { if (elenco) disegnaElenco(); else { disegnaDaProgrammareHome(); disegnaGriglia(); disegnaDaPianificare(); disegnaCoda() } } else disegnaImpostazioni()
 }
 function titoloPeriodo() {
   var iv = C.intervalloVista(ST.zoom, ST.ancora)
@@ -587,13 +596,13 @@ function etichettaStato(c) {
 }
 // v12 (Umberto 9.11): lo stato della commessa a schermo è sempre icona + parola + colore.
 // Le parole e i gruppi stanno in UN posto solo: C.STATI_COMMESSA (calcoli.js). Colori: CSS «.sc-<chiave>».
-//   opz.corto: senza stato → «⚠️ Senza stato» (righe strette); opz.vecchio: «prima: …» (cantieri.stato)
+//   opz.corto: senza stato → «⚠️ Senza stato» (righe strette).
+// v15: il vecchio cantieri.stato (Attivo / In pausa / Completato) non compare più (prima: «prima: …» accanto).
 function badgeStato(valore, opz) {
   opz = opz || {}
   var s = C.statoCommessa(valore)
   var parola = s.gruppo === 'senza' && opz.corto ? 'Senza stato' : s.parola
-  return '<span class="badge-stato sc-' + s.chiave + (s.gruppo === 'senza' ? ' senza' : '') + '">' + s.icona + ' ' + esc(parola) + '</span>' +
-    (s.gruppo === 'senza' && opz.vecchio ? ' <span class="stato-prima">prima: ' + esc(opz.vecchio) + '</span>' : '')
+  return '<span class="badge-stato sc-' + s.chiave + (s.gruppo === 'senza' ? ' senza' : '') + '">' + s.icona + ' ' + esc(parola) + '</span>'
 }
 function righePersone(giorni, oggi) {
   var dal = giorni[0], al = giorni[giorni.length - 1]
@@ -699,7 +708,7 @@ function disegnaDaPianificare() {
     return '<button type="button" class="carta-dp' + (chiusa ? ' chiusa' : '') + '"' + (chiusa ? ' disabled' : '') +
       ' data-dp-cantiere="' + k.id + '"' + (p ? ' data-dp-piano="' + p.id + '"' : '') + '>' +
       '<strong><span class="num">' + esc(k.numero_commessa || 'senza numero') + '</span> ' + esc(k.nome) + '</strong>' +
-      '<span class="dp-sotto">' + badgeStato(k.stato_commessa, { corto: true }) + ' <span class="dp-dove">' + dove + '</span></span>' +
+      '<span class="dp-sotto">' + badgeStato(k.stato_commessa, { corto: true }) + tagCantiere(k) + ' <span class="dp-dove">' + dove + '</span></span>' +
       (ind ? '<span class="piccolo-testo">' + esc(ind) + '</span>' : '') + '</button>'
   }).join('')
   if (!righe.length) h = '<p class="aiuto">' + (cerca ? 'Nessuna commessa con «' + esc(testo) + '».' : 'Nessun lavoro da pianificare (✅ Lavoro da iniziare / 🔨 Lavoro in corso senza giorni).') + '</p>'
@@ -707,6 +716,7 @@ function disegnaDaPianificare() {
     var pc = C.commessePianificabili(ST.dati.cantieri, ST.dati.commesse)
     var resto = []
     if (pc.offerte.length) resto.push('📝 📤 ' + pc.offerte.length + (pc.offerte.length === 1 ? ' offerta' : ' offerte'))
+    if (pc.rimandate.length) resto.push('⏸️ ' + pc.rimandate.length + (pc.rimandate.length === 1 ? ' rimandata' : ' rimandate'))
     if (pc.senzaStato) resto.push('⚠️ ' + pc.senzaStato + ' senza stato')
     if (resto.length) h += '<p class="aiuto dp-nota">Non in elenco: ' + resto.join(' · ') + '. Cercale qui sopra.</p>'
   }
@@ -724,45 +734,68 @@ function disegnaCoda() {
   }).join('')
 }
 
-// ── «📋 Elenco» (v14, Umberto 9.11.2026: «come Programma» di Google Calendar) ──
+// ── «📋 Elenco» (v14, Umberto 9.11.2026: «come Programma» di Google Calendar; v15 10.11.2026: spunte e gruppi) ──
 // Tutte le commesse di Anagrafiche in righe: stato (icona + parola + colore), numero, lavoro, cliente, località,
-// date del Calendario («senza date» se non ci sono). Ordine per data d'inizio, raggruppate per mese; senza date
-// in fondo. Filtri: stato (di base «Aperte»: senza Perse e Lavori finiti), periodo, persona; la ricerca mentre
-// scrivi trova anche quelle in archivio. I calcoli sono in C.elencoCommesse (calcoli.js), qui solo il disegno.
-// Clic sulla riga: piano → scheda; senza piano → «Pianifica commessa» con la ricerca scritta. «📅 Vai al calendario»
-// porta alla vista Cantieri sul primo giorno, con la riga che lampeggia. Stampa: tabella A4 (css v14, @media print).
-var EL_CHIAVE = 'calendario_elenco_filtri_v1'
+// date del Calendario («senza date» se non ci sono), persone. v15: si sceglie con le SPUNTE cosa vedere e stampare
+// (ricordate sul dispositivo); con più stati l'elenco è diviso a gruppi nell'ordine di Umberto (in corso, da iniziare,
+// offerte inviate, offerte da fare, rimandate, finiti, perse); in ogni gruppo per data d'inizio, senza date in fondo.
+// Filtri veloci: «Questo mese», «Prossimi 4 mesi», «Tutte le date». «⚠️ Da programmare»: i Lavori da iniziare senza
+// giorni, per mese previsto. La ricerca mentre scrivi trova anche Lavori finiti e Perse (come la v14).
+// I calcoli sono in C.elencoCommesse (calcoli.js), qui solo il disegno.
+// Clic sulla riga: piano → scheda; senza piano → scheda della commessa (dati, stato, «✏️ Cambia stato», «📋 Pianifica»).
+// «📅 Vai al calendario» porta alla vista Cantieri sul primo giorno; «📅 Programma» al mese previsto. Stampa: tabella A4.
+var EL_CHIAVE = 'calendario_elenco_filtri_v1'          // sessione del browser: ricerca e persona
+var EL_CHIAVE_DISP = 'calendario_elenco_v15'           // dispositivo (localStorage): spunte e periodo
 function leggiFiltriElenco() {
-  try { var x = JSON.parse(sessionStorage.getItem(EL_CHIAVE) || 'null'); if (x && typeof x === 'object') Object.assign(ST.elenco, x) } catch (e) { /* niente memoria: filtri di base */ }
+  try {
+    var x = JSON.parse(sessionStorage.getItem(EL_CHIAVE) || 'null')
+    if (x && typeof x === 'object') {
+      if (typeof x.cerca === 'string') ST.elenco.cerca = x.cerca
+      if (typeof x.persona === 'string') ST.elenco.persona = x.persona
+    }
+  } catch (e) { /* niente memoria: filtri di base */ }
+  try {
+    var y = JSON.parse(localStorage.getItem(EL_CHIAVE_DISP) || 'null')
+    if (y && typeof y === 'object') {
+      if (Array.isArray(y.stati)) ST.elenco.stati = C.statiElenco(y.stati)
+      if (C.FILTRI_PERIODO.some(function (p) { return p.k === y.periodo })) ST.elenco.periodo = y.periodo
+    }
+  } catch (e) { /* niente memoria sul dispositivo: spunte di base */ }
 }
 function salvaFiltriElenco() {
-  try { sessionStorage.setItem(EL_CHIAVE, JSON.stringify(ST.elenco)) } catch (e) { /* niente memoria: va bene lo stesso */ }
+  try { sessionStorage.setItem(EL_CHIAVE, JSON.stringify({ cerca: ST.elenco.cerca, persona: ST.elenco.persona })) } catch (e) { /* va bene lo stesso */ }
+  try { localStorage.setItem(EL_CHIAVE_DISP, JSON.stringify({ stati: C.statiElenco(ST.elenco.stati), periodo: ST.elenco.periodo })) } catch (e) { /* va bene lo stesso */ }
 }
-function opzioniElenco() {
-  var stato = [['aperte', 'Aperte']]          // = senza Perse e Lavori finiti (lo dice il conteggio sotto)
-    .concat(C.STATI_COMMESSA.map(function (s) { return [s.chiave, s.icona + ' ' + s.parola] }))
-    .concat([['senza', '⚠️ Senza stato o da collegare'], ['tutte', 'Tutte, anche in archivio']])
+function statiScelti() { return C.statiElenco(ST.elenco.stati) }
+function opzioniPersona() {
   var persone = '<option value="">Tutte le persone</option>'
   function gruppo(titolo, l) {
     return l.length ? '<optgroup label="' + esc(titolo) + '">' + l.map(function (p) { return '<option value="' + esc(p.id) + '">' + esc(p.nome) + '</option>' }).join('') + '</optgroup>' : ''
   }
-  persone += gruppo('Dipendenti', ST.persone) + gruppo('👷 Esterni', ST.esterni) + gruppo('🗄️ Archivio', ST.archivio)
-  return {
-    stato: stato.map(function (x) { return '<option value="' + x[0] + '">' + esc(x[1]) + '</option>' }).join(''),
-    periodo: C.FILTRI_PERIODO.map(function (x) { return '<option value="' + x.k + '">' + esc(x.n) + '</option>' }).join(''),
-    persona: persone
-  }
+  return persone + gruppo('Dipendenti', ST.persone) + gruppo('👷 Esterni', ST.esterni) + gruppo('🗄️ Archivio', ST.archivio)
 }
+function stessiStati(a, b) { return a.length === b.length && a.every(function (x) { return b.indexOf(x) >= 0 }) }
 function filtriElencoAttivi() {
   var f = ST.elenco
-  return !!(C.pulito(f.cerca) || f.stato !== 'aperte' || f.periodo !== 'tutto' || f.persona)
+  return !!(C.pulito(f.cerca) || f.daProgrammare || !stessiStati(statiScelti(), C.STATI_ELENCO_BASE) || f.periodo !== 'tutto' || f.persona)
 }
-function testoFiltriElenco() {
+// Spunte che si vedono: le 7 di Umberto; «⚠️ Altro» solo se ci sono commesse senza stato / da collegare (o è tolta)
+function spunteVisibili(e) {
+  return C.FILTRI_STATO_ELENCO.filter(function (f) { return f.chiave !== 'altro' || e.totali.altro || e.stati.indexOf('altro') < 0 })
+}
+function testoFiltriElenco(e) {
   var f = ST.elenco, out = []
-  var so = $('el-stato').selectedOptions[0], po = $('el-periodo').selectedOptions[0], pe = $('el-persona').selectedOptions[0]
-  out.push('Stato: ' + (so ? so.textContent : f.stato))
-  if (f.periodo !== 'tutto') out.push('Periodo: ' + (po ? po.textContent : f.periodo))
-  if (f.persona) out.push('Persona: ' + (pe ? pe.textContent : ''))
+  if (f.daProgrammare) out.push('⚠️ Da programmare: Lavori da iniziare senza giorni nel Calendario, per mese previsto')
+  else {
+    var vis = spunteVisibili(e)
+    out.push('Stati: ' + (vis.every(function (x) { return e.stati.indexOf(x.chiave) >= 0 }) ? 'Tutto' :
+      vis.filter(function (x) { return e.stati.indexOf(x.chiave) >= 0 }).map(function (x) { return x.testo }).join(', ') || 'nessuno'))
+    var iv = C.intervalloPeriodoElenco(f.periodo, C.oggiIso())
+    var per = C.FILTRI_PERIODO.find(function (x) { return x.k === f.periodo })
+    if (iv) out.push('Periodo: ' + (per ? per.n : f.periodo) + ' (' + C.fmtDataAnno(iv.dal) + ' – ' + C.fmtDataAnno(iv.al) + '; senza date comprese)')
+    if (e.svelaArchivio) out.push('cercando: anche Lavori finiti e Perse')
+  }
+  if (f.persona) out.push('Persona: ' + (ST.nomi[f.persona] || ''))
   if (C.pulito(f.cerca)) out.push('Cerca: «' + C.pulito(f.cerca) + '»')
   return out.join(' · ')
 }
@@ -770,13 +803,26 @@ function datePeriodo(r) {
   if (!r.dal) return ''
   return r.dal === r.al ? 'il ' + gAnno(r.dal) : 'dal ' + gAnno(r.dal) + ' al ' + gAnno(r.al)
 }
-function nomiPersone(r) {
+function nomiPersone(r, tutti) {
   var n = r.persone.map(function (id) { return ST.nomi[id] || 'Persona sconosciuta' }).sort()
-  return n.length > 4 ? n.slice(0, 4).join(', ') + ' e altre ' + (n.length - 4) : n.join(', ')
+  return !tutti && n.length > 4 ? n.slice(0, 4).join(', ') + ' e altre ' + (n.length - 4) : n.join(', ')
 }
 function badgeElenco(r) {
   if (r.stato.chiave === 'da_collegare') return '<span class="badge-stato senza sc-da_collegare">' + r.stato.icona + ' ' + esc(r.stato.parola) + '</span>'
   return badgeStato(r.cantiere ? r.cantiere.stato_commessa : null)
+}
+// v15 · accanto a «✅ Lavoro da iniziare»: «📅 programmato» con le date, oppure «⚠️ da programmare» (+ periodo previsto)
+function testoProgramma(programma, dal, al, periodo, meseInizio) {
+  if (programma === 'programmato') return '📅 programmato ' + (dal === al ? 'il ' + gAnno(dal) : 'dal ' + gAnno(dal) + ' al ' + gAnno(al))
+  if (programma === 'da_programmare') {
+    var prev = C.pulito(periodo) || C.testoMese(meseInizio)
+    return '⚠️ da programmare' + (prev ? ' · previsto: ' + prev : '')
+  }
+  return ''
+}
+function tagProgramma(programma, dal, al, periodo, meseInizio) {
+  var t = testoProgramma(programma, dal, al, periodo, meseInizio)
+  return t ? ' <span class="tag-programma ' + (programma === 'programmato' ? 'programmato' : 'da-programmare') + '">' + esc(t) + '</span>' : ''
 }
 function rigaElenco(r) {
   var p = r.piano, k = r.cantiere
@@ -788,72 +834,112 @@ function rigaElenco(r) {
   if (r.dal) quando = '<span class="el-date">📅 ' + datePeriodo(r) + '</span>' + (r.persone.length ? '<span class="el-persone">👷 ' + esc(nomiPersone(r)) + '</span>' : '')
   else quando = '<span class="el-date el-senza">🗓️ senza date</span><span class="el-dove">' +
     (r.coda ? '🔧 riparazione in coda' : p ? 'piano aperto, senza giorni' : r.archivio ? 'non si pianifica' : 'non ancora nel Calendario') + '</span>'
-  var testa = '<span class="el-r1">' + badgeElenco(r) + (r.archivio ? ' <span class="el-archivio">🗄️ in archivio</span>' : '') +
+  var note = []
+  if (r.nota) note.push('<span class="el-nota">📝 ' + esc(r.nota) + '</span>')
+  if (r.richiamo) note.push('<span class="el-nota">📞 Richiamare il ' + esc(gAnno(r.richiamo)) + '</span>')
+  var testa = '<span class="el-r1">' + badgeElenco(r) + tagProgramma(r.programma, r.dal, r.al, r.periodo, r.meseInizio) +
+    (r.archivio ? ' <span class="el-archivio">🗄️ in archivio</span>' : '') +
     ' <span class="num">' + esc(r.numero || 'senza numero') + '</span> <strong class="el-nome">' + esc(r.nome) + '</strong></span>' +
-    '<span class="el-r2">' + cliente + loc + '</span><span class="el-r3">' + quando + '</span>'
-  var apri = p || (k && !r.archivio)
+    '<span class="el-r2">' + cliente + loc + '</span><span class="el-r3">' + quando + '</span>' +
+    (note.length ? '<span class="el-r4">' + note.join('') + '</span>' : '')
   var h = '<div class="el-riga' + (r.archivio ? ' archivio' : '') + '" data-el="' + esc(r.chiave) + '"' + (r.dal ? ' data-dal="' + r.dal + '"' : '') + '>'
-  h += apri
+  h += (p || k)
     ? '<button type="button" class="el-apri"' + (p ? ' data-el-piano="' + esc(p.id) + '"' : ' data-el-cantiere="' + esc(k.id) + '"') + '>' + testa + '</button>'
     : '<div class="el-apri sola">' + testa + '</div>'
   if (p && r.dal) h += '<button type="button" class="el-vai" data-el-vai="' + esc(p.id) + '">📅 Vai al calendario</button>'
+  if (k && r.programma === 'da_programmare') h += '<button type="button" class="el-vai el-programma" data-el-programma="' + esc(k.id) + '">📅 Programma</button>'
   return h + '</div>'
 }
 function rigaStampa(r) {
   var dove = [r.cliente || 'cliente non indicato', r.localita].filter(Boolean)
-  return '<tr><td class="st-stato">' + esc(r.stato.icona + ' ' + r.stato.parola) + '</td><td class="st-num">' + esc(r.numero || '–') + '</td>' +
-    '<td><strong>' + esc(r.nome) + '</strong><br>' + esc(dove.join(' · ')) + '</td>' +
+  var altro = []
+  var tp = testoProgramma(r.programma, r.dal, r.al, r.periodo, r.meseInizio)
+  if (r.nota) altro.push('Nota: ' + r.nota)
+  if (r.richiamo) altro.push('Richiamare il ' + C.fmtDataAnno(r.richiamo))
+  return '<tr><td class="st-stato">' + esc(r.stato.icona + ' ' + r.stato.parola) + (tp ? '<br><span class="st-programma">' + esc(tp) + '</span>' : '') + '</td><td class="st-num">' + esc(r.numero || '–') + '</td>' +
+    '<td><strong>' + esc(r.nome) + '</strong><br>' + esc(dove.join(' · ')) +
+    (r.persone.length ? '<br><span class="st-persone">Persone: ' + esc(nomiPersone(r, true)) + '</span>' : '') +
+    (altro.length ? '<br><span class="st-nota">' + esc(altro.join(' · ')) + '</span>' : '') + '</td>' +
     '<td class="st-date">' + (r.dal ? esc(r.dal === r.al ? C.fmtDataAnno(r.dal) : C.fmtDataAnno(r.dal) + ' – ' + C.fmtDataAnno(r.al)) : 'senza date') + '</td></tr>'
+}
+function datiElenco(extra) {
+  var escludi = {}; ST.coda.forEach(function (r) { escludi[r.id] = 1 })
+  return C.elencoCommesse(Object.assign({
+    cantieri: ST.dati.cantieri, commesse: ST.dati.commesse, assegnazioni: ST.dati.assegnazioni, clienti: ST.dati.clienti,
+    oggi: C.oggiIso(), coda: escludi, stati: ST.elenco.stati, periodo: ST.elenco.periodo, persona: ST.elenco.persona,
+    cerca: ST.elenco.cerca, daProgrammare: !!ST.elenco.daProgrammare
+  }, extra || {}))
+}
+function disegnaSpunte(e) {
+  var box = $('el-spunte')
+  var attiva = document.activeElement && document.activeElement.dataset ? document.activeElement.dataset.spunta : null
+  var vis = spunteVisibili(e)
+  var sel = vis.filter(function (f) { return e.stati.indexOf(f.chiave) >= 0 }).length
+  var h = '<label class="el-spunta el-spunta-tutto"><input type="checkbox" data-spunta="tutto"' + (sel === vis.length ? ' checked' : '') + '> <span>Tutto</span></label>'
+  h += vis.map(function (f) {
+    var on = e.stati.indexOf(f.chiave) >= 0
+    return '<label class="el-spunta' + (on ? ' on' : '') + ' sp-' + f.chiave + '"><input type="checkbox" data-spunta="' + f.chiave + '"' + (on ? ' checked' : '') + '> <span>' +
+      f.icona + ' ' + esc(f.testo) + ' <span class="el-n">(' + e.conteggi[f.chiave] + ')</span></span></label>'
+  }).join('')
+  box.innerHTML = h
+  var tutto = box.querySelector('[data-spunta="tutto"]')
+  tutto.indeterminate = sel > 0 && sel < vis.length
+  box.classList.toggle('spento', !!ST.elenco.daProgrammare)
+  box.querySelectorAll('input').forEach(function (i) { i.disabled = !!ST.elenco.daProgrammare })
+  if (attiva) { var x = box.querySelector('[data-spunta="' + attiva + '"]'); if (x) x.focus() }
+}
+function disegnaPeriodi(e) {
+  var icone = { mese: '📅', '4mesi': '📆', tutto: '🗂️' }
+  var h = C.FILTRI_PERIODO.map(function (p) {
+    return '<button type="button" class="el-periodo" data-periodo="' + p.k + '" aria-pressed="' + String(!ST.elenco.daProgrammare && ST.elenco.periodo === p.k) + '"' +
+      (ST.elenco.daProgrammare ? ' disabled' : '') + '>' + (icone[p.k] || '') + ' ' + esc(p.n) + '</button>'
+  }).join('')
+  h += '<button type="button" class="el-periodo el-dp' + (e.nDaProgrammare ? ' ci-sono' : '') + '" id="el-da-programmare" data-da-programmare aria-pressed="' + String(!!ST.elenco.daProgrammare) + '">' +
+    (e.nDaProgrammare ? '⚠️ Da programmare (' + e.nDaProgrammare + ')' : '✅ Da programmare (0)') + '</button>'
+  $('el-periodi').innerHTML = h
 }
 function disegnaElenco() {
   if (!ST.dati || !$('el-lista')) return
-  var op = opzioniElenco()
-  ;[['el-stato', op.stato, 'stato'], ['el-periodo', op.periodo, 'periodo'], ['el-persona', op.persona, 'persona']].forEach(function (x) {
-    var s = $(x[0])
-    if (s.dataset.opz !== x[1]) { s.innerHTML = x[1]; s.dataset.opz = x[1] }
-    s.value = ST.elenco[x[2]]
-    if (s.value !== ST.elenco[x[2]]) { ST.elenco[x[2]] = s.options[0].value; s.value = ST.elenco[x[2]] }   // persona che non c'è più
-  })
+  var op = opzioniPersona(), sp = $('el-persona')
+  if (sp.dataset.opz !== op) { sp.innerHTML = op; sp.dataset.opz = op }
+  sp.value = ST.elenco.persona
+  if (sp.value !== ST.elenco.persona) { ST.elenco.persona = ''; sp.value = '' }       // persona che non c'è più
+  sp.disabled = !!ST.elenco.daProgrammare
   if ($('el-cerca').value !== ST.elenco.cerca) $('el-cerca').value = ST.elenco.cerca
-  var escludi = {}; ST.coda.forEach(function (r) { escludi[r.id] = 1 })
-  var e = C.elencoCommesse({
-    cantieri: ST.dati.cantieri, commesse: ST.dati.commesse, assegnazioni: ST.dati.assegnazioni, clienti: ST.dati.clienti,
-    oggi: C.oggiIso(), coda: escludi, stato: ST.elenco.stato, periodo: ST.elenco.periodo, persona: ST.elenco.persona, cerca: ST.elenco.cerca
-  })
+  var e = datiElenco()
+  disegnaSpunte(e); disegnaPeriodi(e)
   var h = ''
   // Zero commesse da Anagrafiche: non può essere (ce ne sono sempre). È un errore a schermo, mai un elenco vuoto muto.
   if (!e.nCommesse) h += '<div class="esito ko" id="el-zero">Nessuna commessa letta da Anagrafiche (0 righe dalla tabella cantieri). ' +
     'Se in Anagrafiche ci sono commesse, il database non le dà a questo utente: esci, rientra e riprova. L\'elenco qui sotto NON è attendibile.</div>'
   if (ST.dati.senzaCliente) h += '<div class="esito attenzione">👤 ' + esc(ST.dati.senzaCliente) + '</div>'
   if (ST.dati.erroreClienti) h += '<div class="esito attenzione">👤 ' + esc(ST.dati.erroreClienti) + ' Accanto a quelle commesse c’è scritto «' + esc(C.CLIENTE_NON_LEGGIBILE) + '».</div>'
+  if (ST.elenco.daProgrammare) h += '<div class="esito attenzione el-dp-testa">⚠️ <strong>Da programmare</strong>: i «✅ Lavori da iniziare» senza giorni nel Calendario, in ordine di mese previsto (senza mese in fondo). ' +
+    'Premi «📅 Programma» per aprire il Calendario nel mese previsto. <button type="button" class="grande" id="el-dp-esci">↩️ Torna all\'elenco</button></div>'
   e.gruppi.forEach(function (g) {
-    h += '<section class="el-gruppo" data-mese="' + g.chiave + '"><h3 class="el-mese">' + esc(g.titolo) + (g.questoMese ? ' <span class="el-questo">· questo mese</span>' : '') +
-      ' <span class="el-n">(' + g.righe.length + ')</span></h3>' + g.righe.map(rigaElenco).join('') + '</section>'
+    h += '<section class="el-gruppo el-g-' + g.chiave + '" data-gruppo="' + g.chiave + '"><h3 class="el-mese">' + g.icona + ' ' + esc(g.titolo) +
+      ' <span class="el-n">(' + g.righe.length + (g.nSenzaDate && g.nConDate ? ', di cui ' + g.nSenzaDate + ' senza date in fondo' : '') + ')</span></h3>' +
+      g.righe.map(rigaElenco).join('') + '</section>'
   })
-  if (e.senzaDate.length) h += '<section class="el-gruppo el-gruppo-senza" data-mese="senza"><h3 class="el-mese">🗓️ Senza date · da pianificare <span class="el-n">(' + e.senzaDate.length + ')</span></h3>' +
-    '<p class="aiuto">Commesse senza giorni nel Calendario. Prima i lavori, poi quelle senza stato, poi le offerte.</p>' + e.senzaDate.map(rigaElenco).join('') + '</section>'
-  if (!e.righe.length && e.nCommesse) h += '<div class="esito attenzione" id="el-vuoto">Nessuna commessa con questi filtri.' +
-    (filtriElencoAttivi() ? ' Premi «✖️ Togli i filtri».' : '') + '</div>'
+  if (!ST.elenco.daProgrammare && !e.stati.length) h += '<div class="esito attenzione" id="el-vuoto">Nessuno stato spuntato: spunta qui sopra cosa vuoi vedere (o «Tutto»).</div>'
+  else if (!e.righe.length && e.nCommesse) h += '<div class="esito attenzione" id="el-vuoto">' +
+    (ST.elenco.daProgrammare && !C.pulito(ST.elenco.cerca) ? '✅ Nessun lavoro da programmare: tutti i Lavori da iniziare hanno giorni nel Calendario.' : 'Nessuna commessa con questi filtri.' + (filtriElencoAttivi() ? ' Premi «✖️ Togli i filtri».' : '')) + '</div>'
   $('el-lista').innerHTML = h
   var conta = e.righe.length + (e.righe.length === 1 ? ' commessa' : ' commesse') + ' in elenco · ' +
     (e.righe.length - e.senzaDate.length) + ' con date · ' + e.senzaDate.length + ' senza date'
-  if (e.nArchivioNascoste) conta += ' · 🗄️ ' + e.nArchivioNascoste + ' in archivio (Persa / Lavoro finito) non mostrate: cercale o scegli «Tutte»'
+  if (e.nArchivioNascoste) conta += ' · 🗄️ ' + e.nArchivioNascoste + ' fra Lavori finiti e Perse non spuntati'
   $('el-conta').textContent = conta
   $('el-pulisci').hidden = !filtriElencoAttivi()
-  // Tabella per la stampa A4 (si vede solo stampando). La testata si ripete su ogni pagina.
+  // Tabella per la stampa A4 (si vede solo stampando). La testata si ripete su ogni pagina. Stampa = quello che si vede.
   var oggi = C.oggiIso()
   var t = '<thead><tr><th colspan="4" class="st-testa">Carpenteria Ticinese Sagl · Calendario · Elenco commesse · stampato il ' + C.fmtDataAnno(oggi) +
-    '<br><span class="st-filtri">' + esc(testoFiltriElenco()) + ' · ' + e.righe.length + (e.righe.length === 1 ? ' commessa' : ' commesse') + '</span></th></tr>' +
-    '<tr><th>Stato</th><th>N.</th><th>Commessa · cliente · località</th><th>Date</th></tr></thead>'
+    '<br><span class="st-filtri">' + esc(testoFiltriElenco(e)) + ' · ' + e.righe.length + (e.righe.length === 1 ? ' commessa' : ' commesse') + '</span></th></tr>' +
+    '<tr><th>Stato</th><th>N.</th><th>Commessa · cliente · località · persone</th><th>Date</th></tr></thead>'
   e.gruppi.forEach(function (g) {
-    // il titolo del mese sta con la prima riga (mai da solo in fondo alla pagina)
-    t += '<tbody class="st-inizio"><tr class="st-mese"><th colspan="4">' + esc(g.titolo) + '</th></tr>' + rigaStampa(g.righe[0]) + '</tbody>'
+    // il titolo del gruppo sta con la prima riga (mai da solo in fondo alla pagina)
+    t += '<tbody class="st-inizio"><tr class="st-mese"><th colspan="4">' + esc(g.icona + ' ' + g.titolo + ' (' + g.righe.length + ')') + '</th></tr>' + rigaStampa(g.righe[0]) + '</tbody>'
     if (g.righe.length > 1) t += '<tbody>' + g.righe.slice(1).map(rigaStampa).join('') + '</tbody>'
   })
-  if (e.senzaDate.length) {
-    t += '<tbody class="st-inizio"><tr class="st-mese"><th colspan="4">Senza date · da pianificare</th></tr>' + rigaStampa(e.senzaDate[0]) + '</tbody>'
-    if (e.senzaDate.length > 1) t += '<tbody>' + e.senzaDate.slice(1).map(rigaStampa).join('') + '</tbody>'
-  }
   if (!e.righe.length) t += '<tbody><tr><td colspan="4">Nessuna commessa con questi filtri.</td></tr></tbody>'
   $('el-stampa-tab').innerHTML = t
 }
@@ -862,29 +948,240 @@ function vaiAlCalendario(pianoId) {
   if (!r.length) return
   ST.ancora = r[0]
   naviga('piano', 'cantieri')
+  lampeggiaRiga(pianoId)
+}
+function lampeggiaRiga(pianoId) {
   var tr = document.querySelector('tr[data-riga="' + pianoId + '"]')
   if (tr) { tr.classList.add('lampeggia'); tr.scrollIntoView({ block: 'center' }); setTimeout(function () { tr.classList.remove('lampeggia') }, 2600) }
+}
+// v15 · «📅 Programma» (Umberto 10.11): la griglia nel mese previsto (senza mese: nel mese corrente), vista Cantieri, a mese.
+// Con il piano: la sua riga lampeggia (clic su una cella = assegna giorni e persone). Senza piano: «Pianifica commessa»
+// già filtrato su quella commessa (si crea il piano in Bozza, poi la scheda con «Riempi» e «Assegna»).
+async function programmaCommessa(cantiereId) {
+  var k = cantiereDi(cantiereId)
+  if (!k) { mostraErrore('Commessa non trovata in Anagrafiche. Ricarica la pagina.'); return }
+  var mi = C.pulito(k.mese_inizio_previsto).slice(0, 10)
+  var oggi = C.oggiIso()
+  ST.ancora = /^\d{4}-\d{2}-\d{2}$/.test(mi) ? (mi.slice(0, 7) === oggi.slice(0, 7) ? oggi : mi) : oggi
+  ST.zoom = 'mese'
+  naviga('piano', 'cantieri')
+  var p = ST.dati.commesse.find(function (c) { return c.cantiere_id === k.id })
+  toast((k.numero_commessa || k.nome) + ': Calendario aperto a ' + C.MESI[C.mese(ST.ancora)] + ' ' + C.anno(ST.ancora) + (mi ? ' (mese previsto)' : ' (mese previsto non indicato)'))
+  if (p) lampeggiaRiga(p.id)
+  else await apriPianifica({ cerca: C.pulito(k.numero_commessa) || C.pulito(k.nome) })
+}
+function apriDaProgrammare() {
+  ST.elenco.daProgrammare = true
+  ST.elenco.cerca = ''
+  salvaFiltriElenco()
+  if (ST.pagina === 'piano' && ST.vista === 'elenco') disegna(); else naviga('piano', 'elenco')
 }
 function collegaElenco() {
   leggiFiltriElenco()
   $('el-cerca').addEventListener('input', function () { ST.elenco.cerca = $('el-cerca').value; salvaFiltriElenco(); disegnaElenco() })
-  ;[['el-stato', 'stato'], ['el-periodo', 'periodo'], ['el-persona', 'persona']].forEach(function (x) {
-    $(x[0]).addEventListener('change', function () { ST.elenco[x[1]] = $(x[0]).value; salvaFiltriElenco(); disegnaElenco() })
+  $('el-persona').addEventListener('change', function () { ST.elenco.persona = $('el-persona').value; salvaFiltriElenco(); disegnaElenco() })
+  $('el-spunte').addEventListener('change', function (ev) {
+    var i = ev.target.closest('[data-spunta]')
+    if (!i) return
+    var e = datiElenco(), vis = spunteVisibili(e).map(function (f) { return f.chiave })
+    var stati = statiScelti()
+    if (i.dataset.spunta === 'tutto') {
+      var tutti = vis.every(function (k) { return stati.indexOf(k) >= 0 })
+      stati = tutti ? stati.filter(function (k) { return vis.indexOf(k) < 0 }) : C.ORDINE_ELENCO.slice()
+    } else if (i.checked) stati = stati.concat([i.dataset.spunta])
+    else stati = stati.filter(function (k) { return k !== i.dataset.spunta })
+    ST.elenco.stati = C.statiElenco(stati)
+    salvaFiltriElenco(); disegnaElenco()
+  })
+  $('el-periodi').addEventListener('click', function (ev) {
+    var b = ev.target.closest('button')
+    if (!b || b.disabled) return
+    if (b.hasAttribute('data-da-programmare')) { ST.elenco.daProgrammare = !ST.elenco.daProgrammare; salvaFiltriElenco(); disegnaElenco(); return }
+    ST.elenco.periodo = b.dataset.periodo
+    salvaFiltriElenco(); disegnaElenco()
   })
   $('el-pulisci').addEventListener('click', function () {
-    ST.elenco = { cerca: '', stato: 'aperte', periodo: 'tutto', persona: '' }
+    ST.elenco = { cerca: '', stati: C.STATI_ELENCO_BASE.slice(), periodo: 'tutto', persona: '', daProgrammare: false }
     salvaFiltriElenco(); disegnaElenco(); $('el-cerca').focus()
   })
   $('el-stampa').addEventListener('click', function () { disegnaElenco(); window.print() })
   $('el-lista').addEventListener('click', function (e) {
+    if (e.target.closest('#el-dp-esci')) { ST.elenco.daProgrammare = false; salvaFiltriElenco(); disegnaElenco(); return }
     var v = e.target.closest('[data-el-vai]')
     if (v) { vaiAlCalendario(v.dataset.elVai); return }
+    var pr = e.target.closest('[data-el-programma]')
+    if (pr) { esegui(function () { return programmaCommessa(pr.dataset.elProgramma) }); return }
     var b = e.target.closest('.el-apri[data-el-piano], .el-apri[data-el-cantiere]')
     if (!b) return
     if (b.dataset.elPiano) { apriCommessa(b.dataset.elPiano); return }
-    var k = ST.dati.cantieri.find(function (x) { return x.id === b.dataset.elCantiere })
-    if (k) esegui(function () { return apriPianifica({ cerca: C.pulito(k.numero_commessa) || C.pulito(k.nome) }) })
+    apriSchedaCommessa(b.dataset.elCantiere)
   })
+}
+
+// ── v15 · Home: «⚠️ N lavori da programmare» (Umberto 10.11) ─────────────────
+// Numero ben visibile sopra la griglia; clic → Elenco con il filtro «⚠️ Da programmare». N = 0: «✅ Nessun lavoro da programmare».
+function disegnaDaProgrammareHome() {
+  var b = $('tasto-da-programmare')
+  if (!b) return
+  var n = datiElenco({ daProgrammare: true, cerca: '' }).nDaProgrammare
+  b.className = 'tasto-da-programmare grande' + (n ? ' ci-sono' : ' zero')
+  b.textContent = n ? '⚠️ ' + n + (n === 1 ? ' lavoro da programmare' : ' lavori da programmare') : '✅ Nessun lavoro da programmare'
+  b.dataset.n = n
+}
+
+// ── v15 · Scheda della commessa senza piano (dall'Elenco) ──────────────────────
+// Dati di Anagrafiche in sola lettura, lo stato con «✏️ Cambia stato», e «📋 Pianifica nel Calendario».
+function cantiereDi(id) { return (ST.dati.cantieri || []).find(function (k) { return k.id === id }) || null }
+function apriSchedaCommessa(cantiereId) {
+  var k = cantiereDi(cantiereId)
+  if (!k) { mostraErrore('Commessa non trovata in Anagrafiche. Ricarica la pagina.'); return null }
+  var w = apriFinestra((k.numero_commessa || 'senza numero') + ' · ' + k.nome, { centro: true })
+  var cl = C.clienteDi(k, ST.dati.clienti)
+  var chiusa = C.statoCommessa(k.stato_commessa).gruppo === 'chiuso'
+  w.corpo.innerHTML = '<div class="sezione"><h3>📇 Commessa (da Anagrafiche)</h3><div class="riquadro"><dl>' +
+    '<dt>Numero</dt><dd>' + esc(k.numero_commessa || 'senza numero') + '</dd><dt>Nome</dt><dd>' + esc(k.nome) + '</dd>' +
+    '<dt>Cliente</dt><dd>' + (cl.testo ? esc(cl.testo) : '<em>non indicato</em>') + '</dd>' +
+    '<dt>Indirizzo</dt><dd>' + (C.indirizzoCantiere(k) ? esc(C.indirizzoCantiere(k)) : '<strong>mancante</strong>') + '</dd></dl></div>' +
+    bloccoStatoCommessa(k) +
+    '<p class="aiuto">Nome, numero, cliente e indirizzo si cambiano in Anagrafiche. Non ancora nel Calendario.</p></div>' +
+    '<div class="riga-bottoni">' + (!chiusa && ST.dati.versioneDb >= 2 ? '<button type="button" class="primario grande" id="sk-pianifica">📋 Pianifica nel Calendario</button>' : '') +
+    '<button type="button" class="grande" id="sk-chiudi">Chiudi</button></div>'
+  w.corpo.querySelector('#sk-chiudi').addEventListener('click', w.chiudi)
+  var bp = w.corpo.querySelector('#sk-pianifica')
+  if (bp) bp.addEventListener('click', function () { w.chiudi(); esegui(function () { return apriPianifica({ cerca: C.pulito(k.numero_commessa) || C.pulito(k.nome) }) }) })
+  return w
+}
+
+// ── v15 · «✏️ Cambia stato» (Umberto 10.11, PRIORITÀ 1) ──────────────────────
+// La tabella cantieri è di Anagrafiche: il Calendario chiama SOLO la funzione del database
+// anag_commessa_cambia_stato (scrive lo stato e lo storico). Mai un update su cantieri.
+// ST.statoFunzione: 'manca' (database senza ANAG_12, o funzione non trovata = PGRST202) → tasto disattivato
+// con la scritta «Si attiva dopo l'aggiornamento del database», niente errore rosso.
+function bloccoStatoCommessa(k) {
+  return '<div class="stato-commessa" data-stato-cantiere="' + esc(k.id) + '">' + htmlStatoCommessa(k) + '</div>'
+}
+function programmaCantiere(k) {
+  var p = ST.dati.commesse.find(function (c) { return c.cantiere_id === k.id })
+  var d = p ? (ST.assPer[p.id] || []).map(function (a) { return a.data }).sort() : []
+  return { tipo: C.programmaDi(C.statoCommessa(k.stato_commessa), d[0] || null), dal: d[0] || null, al: d[d.length - 1] || null }
+}
+function tagCantiere(k) { var pr = programmaCantiere(k); return tagProgramma(pr.tipo, pr.dal, pr.al, k.periodo_previsto, k.mese_inizio_previsto) }
+function htmlStatoCommessa(k) {
+  var pr = programmaCantiere(k)
+  var h = '<div class="sc-riga"><span class="sc-etichetta">Stato:</span> ' + badgeStato(k.stato_commessa) +
+    tagProgramma(pr.tipo, pr.dal, pr.al, k.periodo_previsto, k.mese_inizio_previsto) + '</div>'
+  if (C.pulito(k.stato_nota)) h += '<div class="sc-nota">📝 Nota: ' + esc(C.pulito(k.stato_nota)) + '</div>'
+  if (C.pulito(k.richiamo_il)) h += '<div class="sc-nota">📞 Richiamare il ' + esc(gAnno(C.pulito(k.richiamo_il).slice(0, 10))) + '</div>'
+  if (C.pulito(k.periodo_previsto) || C.pulito(k.mese_inizio_previsto)) h += '<div class="sc-nota">🗓️ Periodo previsto: ' +
+    esc([C.pulito(k.periodo_previsto), C.pulito(k.mese_inizio_previsto) ? 'da ' + C.testoMese(k.mese_inizio_previsto) : ''].filter(Boolean).join(' · ')) + '</div>'
+  var manca = ST.statoFunzione === 'manca'
+  h += '<button type="button" class="tasto-cambia-stato grande" data-cambia-stato="' + esc(k.id) + '"' + (manca ? ' disabled aria-disabled="true"' : '') + '>✏️ Cambia stato</button>'
+  if (manca) h += '<p class="aiuto sc-manca">⏳ ' + esc(C.TESTO_FUNZIONE_MANCA) + '.</p>'
+  return h
+}
+function aggiornaBlocchiStato() {
+  document.querySelectorAll('[data-stato-cantiere]').forEach(function (el) {
+    var k = cantiereDi(el.dataset.statoCantiere)
+    if (k) el.innerHTML = htmlStatoCommessa(k)
+  })
+}
+document.addEventListener('click', function (ev) {
+  var b = ev.target.closest && ev.target.closest('[data-cambia-stato]')
+  if (b && !b.disabled) apriCambiaStato(b.dataset.cambiaStato)
+})
+function opzioniMeseAnno(iso) {
+  var a0 = C.anno(C.oggiIso()), m = iso ? +iso.slice(5, 7) : 0, a = iso ? +iso.slice(0, 4) : 0
+  var mesi = '<option value="">— mese —</option>' + C.MESI.slice(1).map(function (n, i) { return '<option value="' + String(i + 1).padStart(2, '0') + '"' + (m === i + 1 ? ' selected' : '') + '>' + esc(n) + '</option>' }).join('')
+  var anni = [a0 - 1, a0, a0 + 1, a0 + 2, a0 + 3]
+  if (a && anni.indexOf(a) < 0) anni.push(a)
+  var anniH = '<option value="">— anno —</option>' + anni.map(function (x) { return '<option value="' + x + '"' + (x === a ? ' selected' : '') + '>' + x + '</option>' }).join('')
+  return { mesi: mesi, anni: anniH }
+}
+function apriCambiaStato(cantiereId) {
+  var k = cantiereDi(cantiereId)
+  if (!k) { mostraErrore('Commessa non trovata in Anagrafiche. Ricarica la pagina.'); return null }
+  if (ST.statoFunzione === 'manca') { toast(C.TESTO_FUNZIONE_MANCA + '.'); return null }
+  var attuale = C.statoCommessa(k.stato_commessa)
+  var scelta = C.statoPerChiave(attuale.chiave) ? attuale.chiave : null
+  var w = apriFinestra('✏️ Cambia stato · ' + (k.numero_commessa || k.nome), { centro: true, proteggi: true })
+  var mi = C.pulito(k.mese_inizio_previsto).slice(0, 10), oma = opzioniMeseAnno(/^\d{4}-\d{2}/.test(mi) ? mi : '')
+  w.corpo.innerHTML = '<p><strong>' + esc((k.numero_commessa || 'senza numero') + ' · ' + k.nome) + '</strong><br>Stato di adesso: ' + badgeStato(k.stato_commessa) + '</p>' +
+    '<p class="aiuto">Scegli il nuovo stato:</p><div class="cs-stati" role="radiogroup" aria-label="Nuovo stato">' + C.STATI_COMMESSA.map(function (s) {
+      return '<button type="button" role="radio" aria-checked="' + String(s.chiave === scelta) + '" class="cs-stato sc-' + s.chiave + (s.chiave === scelta ? ' scelto' : '') + '" data-cs="' + s.chiave + '">' +
+        '<span class="cs-icona">' + s.icona + '</span> ' + esc(s.parola) + '</button>'
+    }).join('') + '</div>' +
+    '<div class="campi">' + campo('Nota (facoltativa)', '<input id="cs-nota" type="text" maxlength="500" autocomplete="off" value="' + esc(C.pulito(k.stato_nota)) + '" placeholder="es. attesa licenza edilizia">') + '</div>' +
+    '<div class="campi" id="cs-richiamo-campo" hidden>' + campo('Richiamare il', '<input id="cs-richiamo" type="date" value="' + esc(C.pulito(k.richiamo_il).slice(0, 10)) + '">') + '</div>' +
+    '<div class="campi" id="cs-periodo-campo" hidden>' +
+    campo('Periodo previsto', '<input id="cs-periodo" type="text" maxlength="200" autocomplete="off" value="' + esc(C.pulito(k.periodo_previsto)) + '" placeholder="es. marzo 2027, dicembre o gennaio">') +
+    '<div class="campo"><label for="cs-mese">Mese di inizio</label><div class="cs-mese-anno"><select id="cs-mese" aria-label="Mese di inizio">' + oma.mesi + '</select>' +
+    '<select id="cs-anno" aria-label="Anno di inizio">' + oma.anni + '</select></div></div></div>' +
+    '<div id="cs-esito"></div>' +
+    '<div class="riga-bottoni"><button type="button" class="primario grande" id="cs-ok">✔️ Conferma</button><button type="button" class="grande" id="cs-annulla">Annulla</button></div>' +
+    '<p class="aiuto">Lo stato lo scrive Anagrafiche (funzione del database) e resta nello storico della commessa: chi, quando, prima → dopo.</p>'
+  var q = function (s) { return w.corpo.querySelector(s) }
+  function mostraCampi() {
+    q('#cs-richiamo-campo').hidden = scelta !== 'rimandata'
+    q('#cs-periodo-campo').hidden = scelta !== 'lavoro_da_iniziare'
+  }
+  mostraCampi()
+  w.corpo.querySelectorAll('[data-cs]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      scelta = b.dataset.cs
+      w.sporca = true
+      w.corpo.querySelectorAll('[data-cs]').forEach(function (x) { var on = x === b; x.classList.toggle('scelto', on); x.setAttribute('aria-checked', String(on)) })
+      mostraCampi()
+      q('#cs-esito').innerHTML = ''
+    })
+  })
+  q('#cs-annulla').addEventListener('click', function () { richiediChiusura(w) })
+  q('#cs-ok').addEventListener('click', function () {
+    esegui(async function () {
+      var esito = q('#cs-esito')
+      if (!scelta) { esito.innerHTML = '<div class="esito ko">Scegli uno dei 7 stati.</div>'; return }
+      var mese = q('#cs-mese').value, annoS = q('#cs-anno').value
+      if ((mese && !annoS) || (!mese && annoS)) { esito.innerHTML = '<div class="esito ko">Mese di inizio: scegli il mese e l\'anno (o nessuno dei due).</div>'; return }
+      // contratto ANAG_12: la funzione scrive i valori come li riceve → si mandano SEMPRE nota, richiamo, periodo e mese
+      // (la finestra parte con quelli di adesso, anche se i campi non si vedono per lo stato scelto)
+      var req = C.richiestaCambioStato(k.id, scelta, { nota: q('#cs-nota').value, richiamo: q('#cs-richiamo').value,
+        periodo: q('#cs-periodo').value, meseInizio: mese && annoS ? annoS + '-' + mese : '' }, k)
+      if (!req.ok) { esito.innerHTML = '<div class="esito ' + (req.niente ? 'attenzione" id="cs-niente' : 'ko') + '">' + esc(req.messaggio) + '</div>'; return }
+      var ok = q('#cs-ok')
+      ok.disabled = true; ok.textContent = '⏳ Salvo…'
+      var r = await D.cambiaStatoCommessa(req.parametri)
+      ok.disabled = false; ok.textContent = '✔️ Conferma'
+      if (!r.ok) {
+        var err = C.erroreCambioStato(r.errore)
+        if (err.tipo === 'sessione') { w.sporca = false; mostraLogin(err.testo); return }
+        if (err.tipo === 'manca') {
+          ST.statoFunzione = 'manca'
+          esito.innerHTML = '<div class="esito attenzione" id="cs-manca">⏳ ' + esc(err.testo) + ' Lo stato NON è cambiato.</div>'
+          ok.disabled = true
+          aggiornaBlocchiStato()
+          return
+        }
+        esito.innerHTML = '<div class="esito ko" id="cs-errore">' + esc(err.testo) + '</div>'
+        return
+      }
+      var rr = C.rispostaCambioStato(r.data, req.parametri)
+      if (!rr.ok) { esito.innerHTML = '<div class="esito ko" id="cs-errore">' + esc(rr.errore.testo) + '</div>'; return }
+      ST.statoFunzione = 'ok'
+      if (!rr.cambiato) {
+        Object.assign(k, rr.valori); aggiornaBlocchiStato()          // la copia in memoria = quello che dice il database
+        esito.innerHTML = '<div class="esito attenzione" id="cs-niente">' + esc(C.TESTO_NIENTE_DA_CAMBIARE) + ': il database non ha cambiato niente.</div>'
+        return
+      }
+      // il database ha scritto: si aggiorna la copia in memoria con i valori che ha scritto lui (niente ricarica di tutto)
+      var prima = C.testoStato(k.stato_commessa)
+      Object.assign(k, rr.valori)
+      w.sporca = false
+      w.chiudi()
+      ricostruisci(); disegna(); aggiornaBlocchiStato()
+      toast('✔️ ' + (k.numero_commessa || k.nome) + ': stato cambiato · ' + prima + ' → ' + C.testoStato(k.stato_commessa))
+    })
+  })
+  q('#cs-ok').focus()
+  return w
 }
 
 // ── Trascinare (PC) ─────────────────────────────────────────────────────────
@@ -1181,14 +1478,14 @@ async function apriPianifica(opz) {
     var testo = (w.corpo.querySelector('#pc-cerca') || {}).value || ''
     var cerca = !!C.pulito(testo)
     var lista = pc.lista.filter(function (k) { return C.cercaCantiere(k, testo) })
-    var offerte = cerca ? pc.offerte.filter(function (k) { return C.cercaCantiere(k, testo) }) : []
+    var offerte = cerca ? pc.offerte.concat(pc.rimandate).filter(function (k) { return C.cercaCantiere(k, testo) }) : []
     var el = w.corpo.querySelector('#pc-lista')
     var senza = pc.listaSenzaStato.filter(function (k) { return C.cercaCantiere(k, testo) })
     function voce(k, senzaStato) {
       var ind = C.indirizzoCantiere(k)
       return '<button type="button" class="voce-commessa' + (senzaStato ? ' senza-stato' : '') + '" data-scegli="' + k.id + '">' +
         '<span class="vc-riga"><span class="num">' + esc(k.numero_commessa || 'senza numero') + '</span> <strong>' + esc(k.nome) + '</strong></span>' +
-        '<span class="vc-sotto">' + badgeStato(k.stato_commessa, { vecchio: C.pulito(k.stato) }) +
+        '<span class="vc-sotto">' + badgeStato(k.stato_commessa) +
         (ind ? ' ' + esc(ind) : ' <em>indirizzo mancante</em>') + '</span></button>'
     }
     if (!pc.lista.length && !pc.listaSenzaStato.length && !offerte.length) el.innerHTML = '<div class="esito attenzione">Nessun lavoro da pianificare: in Anagrafiche non ci sono commesse «✅ Lavoro da iniziare» o «🔨 Lavoro in corso» che non siano già nel Calendario.' +
@@ -1254,7 +1551,7 @@ function disegnaScheda(w, c) {
     campo('Data inizio prevista', '<input id="sc-inizio" type="date" value="' + esc(c.data_inizio || '') + '">') +
     campo('Persone previste', '<input id="sc-persone" type="text" inputmode="numeric" value="' + esc(c.persone_previste || '') + '">', 'persone') +
     campo('Colore nel piano', '<input id="sc-colore" type="color" value="' + esc(c.colore || '#2d6a4f') + '">') +
-    '</div><p class="aiuto">Stato del piano: Bozza = in preparazione · Confermato = si salva la copia «previsto» · Finito = lavori finiti. Lo stato della commessa (📝 Offerta da fare, 🔨 Lavoro in corso…) si cambia in Anagrafiche.</p></div>'
+    '</div><p class="aiuto">Stato del piano: Bozza = in preparazione · Confermato = si salva la copia «previsto» · Finito = lavori finiti. Lo stato della commessa (📝 Offerta da fare, 🔨 Lavoro in corso…) si cambia qui sopra con «✏️ Cambia stato» (o in Anagrafiche).</p></div>'
 
   h += '<div class="sezione"><h3>🚗 Viaggio (andata)</h3><div class="campi">' +
     campo('Minuti di viaggio, andata', '<input id="sc-viaggio" type="text" inputmode="numeric" value="' + esc(c.viaggio_min_andata === null || c.viaggio_min_andata === undefined ? '' : c.viaggio_min_andata) + '">', 'min') +
@@ -1290,8 +1587,9 @@ function sezioneAnagrafica(c) {
   if (c.collegata) {
     return h + '<div class="riquadro"><dl><dt>Numero</dt><dd>' + esc(c.numero) + '</dd><dt>Nome</dt><dd>' + esc(c.nome) + '</dd>' +
       '<dt>Indirizzo</dt><dd>' + (c.indirizzo ? esc(c.indirizzo) : '<strong>mancante</strong>') + '</dd>' +
-      '<dt>Stato commessa</dt><dd>' + (c.cantiere_tipo === 'interno' && !c.stato_commessa ? 'interna' : badgeStato(c.stato_commessa, { vecchio: c.stato_vecchio })) + '</dd></dl></div>' +
-      '<p class="aiuto">Si cambiano in Anagrafiche. Il Calendario li legge soltanto.</p></div>'
+      '</dl></div>' +
+      (c.cantiere_tipo === 'interno' && !c.stato_commessa ? '<p>Stato: interna</p>' : cantiereDi(c.cantiere_id) ? bloccoStatoCommessa(cantiereDi(c.cantiere_id)) : '') +
+      '<p class="aiuto">Numero, nome e indirizzo si cambiano in Anagrafiche: il Calendario li legge soltanto. Lo stato si cambia con «✏️ Cambia stato» (lo scrive Anagrafiche, con lo storico).</p></div>'
   }
   // riga vecchia (versione 2) o commessa non più trovata: si collega
   var pc = C.commessePianificabili(ST.dati.cantieri, ST.dati.commesse, { tutti: true })
@@ -2662,6 +2960,7 @@ function collegaBarra() {
     var cc = e.target.closest('[data-commessa]'); if (cc) apriCommessa(cc.dataset.commessa)
   })
   collegaElenco()                 // v14: vista «📋 Elenco»
+  $('tasto-da-programmare').addEventListener('click', apriDaProgrammare)      // v15
   $('coda-lista').addEventListener('keydown', function (e) {
     if (e.key !== 'Enter') return
     var cc = e.target.closest('[data-commessa]'); if (cc) apriCommessa(cc.dataset.commessa)

@@ -6,20 +6,20 @@
   <title>Calendario · Carpenteria Ticinese</title>
   <!-- ?v= : forza il browser a riprendere CSS/JS aggiornati (niente versioni vecchie in cache) -->
   <!-- Identità (v10): nome Calendario, icona 📅, verde #2d6a4f. Installabile su PC e telefono (manifest). -->
-  <link rel="manifest" href="manifest.json?v=14" />
+  <link rel="manifest" href="manifest.json?v=15" />
   <meta name="theme-color" content="#2d6a4f" />
-  <link rel="icon" type="image/png" sizes="32x32" href="icone/icona-32.png?v=14" />
-  <link rel="apple-touch-icon" href="icone/icona-180.png?v=14" />
+  <link rel="icon" type="image/png" sizes="32x32" href="icone/icona-32.png?v=15" />
+  <link rel="apple-touch-icon" href="icone/icona-180.png?v=15" />
   <meta name="apple-mobile-web-app-title" content="Calendario" />
-  <link rel="stylesheet" href="css/style.css?v=14" />
+  <link rel="stylesheet" href="css/style.css?v=15" />
 </head>
-<body data-versione="14">
+<body data-versione="15">
 
 <!-- ── Login ──────────────────────────────────────────────────────────────── -->
 <div id="schermo-login" class="schermo" hidden>
   <form id="form-login" class="scheda-login" autocomplete="on" novalidate>
     <div class="titolo-app">
-      <img src="icone/icona-192.png?v=14" alt="" class="icona-login" />
+      <img src="icone/icona-192.png?v=15" alt="" class="icona-login" />
       <h1>Calendario</h1>
     </div>
     <p class="sotto">Piano dei cantieri · Carpenteria Ticinese Sagl · solo titolare e responsabile</p>
@@ -29,7 +29,7 @@
     <label for="login-password">Password</label>
     <input id="login-password" type="password" autocomplete="current-password" required />
     <button type="submit" class="primario grande">Entra</button>
-    <p class="sotto piccola-versione">versione 14</p>
+    <p class="sotto piccola-versione">versione 15</p>
   </form>
 </div>
 
@@ -48,7 +48,7 @@
 <!-- ── App ────────────────────────────────────────────────────────────────── -->
 <div id="app" hidden>
   <header id="barra" aria-label="Barra comandi">
-    <div class="marchio"><img src="icone/icona-192.png?v=14" alt="" /> <span class="nome-app">Calendario</span> <span class="versione">v14</span></div>
+    <div class="marchio"><img src="icone/icona-192.png?v=15" alt="" /> <span class="nome-app">Calendario</span> <span class="versione">v15</span></div>
 
     <div class="segmenti" role="group" aria-label="Vista">
       <button type="button" class="seg" data-vista="cantieri" aria-pressed="true">🏗️ Cantieri</button>
@@ -83,6 +83,8 @@
   <div id="avviso-titolare" class="striscia-avviso" hidden></div>
   <div id="avviso-persone" class="striscia-avviso" hidden></div>
   <div id="barra-archivio" hidden></div>
+  <!-- v15 (Umberto 10.11.2026): numero ben visibile dei Lavori da iniziare ancora senza giorni; clic = Elenco «⚠️ Da programmare» -->
+  <div id="striscia-da-programmare" hidden><button type="button" id="tasto-da-programmare" class="tasto-da-programmare grande"></button></div>
 
   <main id="pagina-piano">
     <div id="contenitore-griglia" aria-label="Piano">
@@ -107,14 +109,18 @@
   <main id="pagina-elenco" hidden aria-labelledby="el-titolo">
     <div class="el-testa">
       <h2 id="el-titolo">📋 Elenco commesse</h2>
-      <p class="aiuto">Tutte le commesse di Anagrafiche, in ordine di data d'inizio nel Calendario. Quelle senza date sono in fondo.</p>
+      <p class="aiuto">Le commesse di Anagrafiche divise per stato. In ogni gruppo: per data d'inizio nel Calendario, quelle senza date in fondo. Quello che vedi è quello che stampi.</p>
+      <!-- v15 (Umberto 10.11.2026): spunte per scegliere cosa vedere e stampare, ricordate su questo dispositivo -->
+      <fieldset class="el-spunte-box">
+        <legend>Cosa vedere e stampare</legend>
+        <div id="el-spunte" class="el-spunte"></div>
+      </fieldset>
+      <div class="el-periodi" role="group" aria-label="Periodo" id="el-periodi"></div>
       <div class="el-filtri">
         <div class="el-campo el-campo-cerca">
           <label for="el-cerca">🔍 Cerca commessa</label>
           <input id="el-cerca" type="search" autocomplete="off" placeholder="numero, cliente, località o lavoro" />
         </div>
-        <div class="el-campo"><label for="el-stato">Stato</label><select id="el-stato"></select></div>
-        <div class="el-campo"><label for="el-periodo">Periodo</label><select id="el-periodo"></select></div>
         <div class="el-campo"><label for="el-persona">Persona</label><select id="el-persona"></select></div>
         <div class="el-tasti">
           <button type="button" id="el-pulisci" hidden>✖️ Togli i filtri</button>
@@ -134,18 +140,18 @@
 <div id="toast" role="status" aria-live="polite"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="js/config.js?v=14"></script>
-<script src="js/calcoli.js?v=14"></script>
-<script src="js/viaggio.js?v=14"></script>
-<script src="js/dati.js?v=14"></script>
+<script src="js/config.js?v=15"></script>
+<script src="js/calcoli.js?v=15"></script>
+<script src="js/viaggio.js?v=15"></script>
+<script src="js/dati.js?v=15"></script>
 <!-- v4 «Carica offerta Excel»: SheetJS in locale (mai da internet), copia del lettore del Preventivatore, ore per capitolo -->
-<script src="lib/xlsx-0.20.3.full.min.js?v=14"></script>
-<script src="js/importa_offerta.js?v=14"></script>
-<script src="js/offerta_ore.js?v=14"></script>
-<script src="js/app.js?v=14"></script>
+<script src="lib/xlsx-0.20.3.full.min.js?v=15"></script>
+<script src="js/importa_offerta.js?v=15"></script>
+<script src="js/offerta_ore.js?v=15"></script>
+<script src="js/app.js?v=15"></script>
 <!-- v13 (Umberto, 9.11.2026): mai versioni vecchie bloccate. aggiorna.js è lo stesso file in tutte le app: NON si modifica.
      Le due cose del Calendario (avviso dati non salvati, altezza della fascia in --ct-agg-h) sono in js/app.js, «Nuova versione».
      A ogni versione: stesso numero in versione.json, data-versione, ?v= e PL_CONFIG.VERSIONE. -->
-<script src="aggiorna.js?v=14" data-versione="14"></script>
+<script src="aggiorna.js?v=15" data-versione="15"></script>
 </body>
 </html>

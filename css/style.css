@@ -244,7 +244,6 @@ button.ubicazione.coperto { background: #e0e7ff; border-color: #3730a3; }
 .piccola-versione { font-size: .85rem; text-align: right; margin: 6px 0 0; }
 .badge-stato { display: inline-block; padding: 1px 8px; border: 2px solid var(--primary); border-radius: 999px; background: var(--primary-lt); color: var(--primary-hi); font-weight: 700; font-size: .9rem; }
 .badge-stato.senza { border-color: var(--warn); background: var(--warn-bg); color: var(--warn); }
-.stato-prima { color: var(--text3); font-size: .85rem; font-style: italic; }
 .gruppo-senza-stato { margin: 14px 0 0; padding: 8px 12px; background: var(--warn-bg); color: var(--warn); border-left: 8px solid var(--warn); border-radius: var(--radius); font-size: 1.05rem; }
 button.voce-commessa.senza-stato { border-left-color: var(--warn); }
 .lista-commesse { display: flex; flex-direction: column; gap: 8px; margin: 12px 0; }
@@ -481,6 +480,56 @@ table.el-stampa { display: none; }
   .segmenti { flex-wrap: wrap; }
 }
 
+/* ── Versione 15 (Umberto 10.11.2026): 7 stati, spunte dell'Elenco, «✏️ Cambia stato», «⚠️ Da programmare» ── */
+.badge-stato.sc-rimandata          { border-color: #a16207; background: #fef9c3; color: #713f12; }
+.el-spunte-box { border: 2px solid var(--border-lt); border-radius: var(--radius); margin: 8px 0 10px; padding: 6px 10px 10px; min-width: 0; }
+.el-spunte-box legend { font-weight: 700; padding: 0 4px; }
+.el-spunte { display: flex; flex-wrap: wrap; gap: 8px; }
+.el-spunte.spento { opacity: .55; }
+.el-spunta { display: inline-flex; align-items: center; gap: 8px; min-height: 48px; padding: 6px 12px; border: 2px solid var(--border-lt); border-radius: var(--radius);
+  background: #fff; font-size: 1rem; cursor: pointer; min-width: 0; overflow-wrap: anywhere; }
+.el-spunta input { width: 26px; height: 26px; flex: 0 0 auto; margin: 0; accent-color: var(--primary); }
+.el-spunta.on { border-color: var(--primary); background: var(--primary-lt); font-weight: 600; }
+.el-spunta-tutto { font-weight: 700; }
+.el-periodi { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+button.el-periodo { min-height: 52px; font-size: 1.05rem; font-weight: 600; }
+button.el-periodo[aria-pressed="true"] { background: var(--primary); border-color: var(--primary); color: #fff; }
+button.el-dp.ci-sono { border-color: var(--warn); color: var(--warn); background: var(--warn-bg); }
+button.el-dp.ci-sono[aria-pressed="true"] { background: var(--warn); border-color: var(--warn); color: #fff; }
+.el-dp-testa { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.el-r4 { display: flex; flex-wrap: wrap; gap: 2px 14px; color: var(--text2); font-size: 1rem; }
+.el-nota { font-style: italic; }
+button.el-programma { border-color: var(--warn); color: var(--warn); background: var(--warn-bg); }
+.tag-programma { display: inline-block; padding: 0 8px; border-radius: 999px; font-weight: 700; font-size: .9rem; border: 2px solid; }
+.tag-programma.programmato { border-color: #047857; color: #065f46; background: #fff; }
+.tag-programma.da-programmare { border-color: var(--warn); color: var(--warn); background: var(--warn-bg); }
+.stato-commessa { margin: 10px 0 0; padding: 10px 12px; border: 2px solid var(--border-lt); border-radius: var(--radius); background: #fff; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.sc-etichetta { font-weight: 700; }
+.sc-nota { color: var(--text2); overflow-wrap: anywhere; }
+button.tasto-cambia-stato { font-weight: 700; }
+.sc-manca { margin: 0; color: var(--text2); font-weight: 600; }
+.cs-stati { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; margin: 6px 0 12px; }
+button.cs-stato { min-height: 56px; font-size: 1.1rem; font-weight: 600; text-align: left; border-width: 3px; }
+button.cs-stato .cs-icona { font-size: 1.3rem; }
+button.cs-stato.scelto { outline: 4px solid var(--primary); outline-offset: 1px; background: var(--primary-lt); }
+button.cs-stato.scelto::after { content: " ✔"; }
+button.cs-stato.sc-offerta_da_fare { border-color: #6b7280; } button.cs-stato.sc-offerta_inviata { border-color: #1e40af; }
+button.cs-stato.sc-rimandata { border-color: #a16207; } button.cs-stato.sc-lavoro_da_iniziare { border-color: #047857; }
+button.cs-stato.sc-lavoro_in_corso { border-color: #c2410c; } button.cs-stato.sc-lavoro_finito { border-color: #4b5563; }
+button.cs-stato.sc-persa { border-color: #b91c1c; }
+.cs-mese-anno { display: flex; gap: 8px; flex-wrap: wrap; }
+.cs-mese-anno select { min-height: 48px; flex: 1 1 130px; }
+#striscia-da-programmare { padding: 8px 16px 0; }
+button.tasto-da-programmare { width: 100%; max-width: 640px; font-weight: 700; font-size: 1.2rem; min-height: 56px; }
+button.tasto-da-programmare.ci-sono { border: 3px solid var(--warn); color: var(--warn); background: var(--warn-bg); }
+button.tasto-da-programmare.zero { border: 2px solid #047857; color: #065f46; background: #ecfdf5; }
+@media (max-width: 600px) {
+  .el-spunta { flex: 1 1 100%; }
+  button.el-periodo { flex: 1 1 45%; white-space: normal; }
+  .cs-stati { grid-template-columns: 1fr; }
+  #striscia-da-programmare { padding: 8px 8px 0; }
+}
+
 /* Stampa dell'Elenco (Umberto 9.11.2026): A4 verticale, margini ≥ 8 mm (qui 10–16 mm), al 100 % («Dimensioni effettive»).
    Ditta, data e filtri nella testata della tabella, ripetuta su ogni pagina; «Pagina N di M» in basso a destra. */
 @media print {
@@ -506,4 +555,6 @@ table.el-stampa { display: none; }
   .el-stampa td.st-date { width: 46mm; }
   .el-stampa tr { break-inside: avoid; }
   .el-stampa tbody.st-inizio { break-inside: avoid; }
+  .el-stampa .st-programma, .el-stampa .st-persone, .el-stampa .st-nota { font-size: 9pt; }
+  body.vista-elenco #striscia-da-programmare { display: none !important; }
 }

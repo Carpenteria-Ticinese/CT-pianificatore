@@ -21,6 +21,8 @@
    v14 («📋 Elenco»): anche il cliente, cantieri.cliente_id + committente (copia del nome
    scritta da Anagrafiche); il nome del contatto da tm_contatti (id, ragione_sociale, nome,
    cognome), solo per gli id usati. Colonne mancanti → si legge come la v13, senza cliente.
+   v15: anche stato_nota, richiamo_il, periodo_previsto, mese_inizio_previsto (SQL ANAG_12); il vecchio cantieri.stato NON si legge più.
+   Lo stato si cambia SOLO con rpc('anag_commessa_cambia_stato'): mai un update su cantieri.
    ═══════════════════════════════════════════════════════════════════════════ */
 var PLD = (function () {
   'use strict'
@@ -80,7 +82,7 @@ var PLD = (function () {
   function colonnaMancante(e) {
     var o = (e && e.originale) || e || {}
     var t = (o.code || '') + ' ' + (o.message || '') + ' ' + (e && e.message || '')
-    return /42703|PGRST204/.test(t) || /column .*(rapporto|ditta_id|committente|cliente_id).* does not exist/i.test(t)
+    return /42703|PGRST204/.test(t) || /column .*(rapporto|ditta_id|committente|cliente_id|stato_nota|richiamo_il|periodo_previsto|mese_inizio_previsto).* does not exist/i.test(t)
   }
 
   // Persone con rapporto e ditta. Se la colonna rapporto manca: si leggono come
@@ -118,19 +120,47 @@ var PLD = (function () {
       return { ditte: null, errore: 'Nomi delle ditte non leggibili: ' + ((e && e.message) || e) }
     }
   }
-  var COLONNE_CANTIERI_V13 = 'id,nome,numero_commessa,stato_commessa,stato,tipo,via,cap,citta,luogo'
-  var COLONNE_CANTIERI = COLONNE_CANTIERI_V13 + ',committente,cliente_id'
+  // v15 (Umberto 10.11): lo stato della commessa è UNO solo, stato_commessa (7 parole). Il vecchio cantieri.stato
+  // (Attivo / In pausa / Completato) non si legge più: non compare e non decide niente.
+  var COLONNE_CANTIERI_V13 = 'id,nome,numero_commessa,stato_commessa,tipo,via,cap,citta,luogo'
+  // Gruppi di colonne che possono mancare (database più vecchio): si leggono se ci sono, se no si va avanti senza.
+  //   cliente (v14) · nota = stato_nota + richiamo_il (ANAG_12) · periodo = periodo_previsto + mese_inizio_previsto (ANAG_12)
+  var GRUPPI_FACOLTATIVI = [
+    { nome: 'cliente', colonne: ',committente,cliente_id', re: /committente|cliente_id/i },
+    { nome: 'nota', colonne: ',stato_nota,richiamo_il', re: /stato_nota|richiamo_il/i },
+    { nome: 'periodo', colonne: ',periodo_previsto,mese_inizio_previsto', re: /periodo_previsto|mese_inizio_previsto/i }
+  ]
+  var COLONNE_CANTIERI = COLONNE_CANTIERI_V13 + GRUPPI_FACOLTATIVI.map(function (g) { return g.colonne }).join('')
   var TESTO_SENZA_CLIENTE = 'Nel database mancano le colonne del cliente delle commesse (cantieri.cliente_id / committente): nell’Elenco il cliente non si vede.'
 
-  // v14: commesse di Anagrafiche con il cliente. Colonna mancante → come la v13 + motivo. { cantieri, senzaCliente }
+  // v14/v15: commesse di Anagrafiche con cliente, nota dello stato e periodo previsto. Colonna mancante (42703):
+  // si toglie il gruppo di quella colonna (se il messaggio non la nomina: prima periodo, poi nota, poi cliente)
+  // e si rilegge. { cantieri, senzaCliente (testo|null), senzaNota, senzaPeriodo }
   async function leggiCantieri() {
-    try {
-      return { cantieri: await leggi('cantieri', COLONNE_CANTIERI, 'nome'), senzaCliente: null }
-    } catch (e) {
-      if (e && e.sessioneAssente) throw e
-      if (!colonnaMancante(e)) throw e
-      return { cantieri: await leggi('cantieri', COLONNE_CANTIERI_V13, 'nome'), senzaCliente: TESTO_SENZA_CLIENTE }
+    var attivi = GRUPPI_FACOLTATIVI.slice()
+    for (;;) {
+      try {
+        var righe = await leggi('cantieri', COLONNE_CANTIERI_V13 + attivi.map(function (g) { return g.colonne }).join(''), 'nome')
+        var c = function (n) { return !attivi.some(function (g) { return g.nome === n }) }
+        return { cantieri: righe, senzaCliente: c('cliente') ? TESTO_SENZA_CLIENTE : null, senzaNota: c('nota'), senzaPeriodo: c('periodo') }
+      } catch (e) {
+        if (e && e.sessioneAssente) throw e
+        if (!colonnaMancante(e) || !attivi.length) throw e
+        var t = ((e.originale && e.originale.message) || '') + ' ' + (e.message || '')
+        var g = attivi.filter(function (x) { return x.re.test(t) })[0] || attivi[attivi.length - 1]
+        attivi = attivi.filter(function (x) { return x !== g })
+      }
     }
+  }
+
+  // v15 · cambio dello stato della commessa: SOLO con la funzione di Anagrafiche (la tabella cantieri non è nostra).
+  // → { ok: true, data } | { ok: false, errore: { code, message } } (la traduzione in italiano è in calcoli.js)
+  async function cambiaStatoCommessa(parametri) {
+    await richiediSessione()
+    var r
+    try { r = await sb.rpc('anag_commessa_cambia_stato', parametri) } catch (e) { return { ok: false, errore: { code: '', message: (e && e.message) || String(e) } } }
+    if (r.error) return { ok: false, errore: r.error }
+    return { ok: true, data: r.data }
   }
   // v14: nomi dei clienti (tm_contatti), solo per i cliente_id usati. { clienti: { id: riga } | null, errore }
   // Righe mancanti (RLS che nega in silenzio) = «cliente non leggibile» nell'Elenco, mai vuoto.
@@ -262,7 +292,7 @@ var PLD = (function () {
     var cl = await leggiClienti(ca.cantieri)
     return {
       versioneDb: risultati[14],
-      senzaCliente: ca.senzaCliente, clienti: cl.clienti, erroreClienti: cl.errore,
+      senzaCliente: ca.senzaCliente, senzaNota: ca.senzaNota, senzaPeriodo: ca.senzaPeriodo, clienti: cl.clienti, erroreClienti: cl.errore,
       senzaRapporto: op.senzaRapporto, ditte: di.ditte, erroreDitte: di.errore,
       imp: risultati[0][0], periodi: risultati[1], festivi: risultati[2], chiusure: risultati[3],
       assenze: risultati[4], commesse: risultati[5], capitoli: risultati[6], assegnazioni: risultati[7],
@@ -276,7 +306,7 @@ var PLD = (function () {
     controllaAccesso: controllaAccesso, leggi: leggi, inserisci: inserisci, aggiorna: aggiorna,
     salvaUpsert: salvaUpsert, eliminaId: eliminaId, caricaTutto: caricaTutto, versioneDb: versioneDb,
     leggiOperai: leggiOperai, leggiDitte: leggiDitte, colonnaMancante: colonnaMancante,
-    leggiCantieri: leggiCantieri, leggiClienti: leggiClienti,
+    leggiCantieri: leggiCantieri, leggiClienti: leggiClienti, cambiaStatoCommessa: cambiaStatoCommessa,
     COLONNE_OPERAI: COLONNE_OPERAI, COLONNE_CANTIERI: COLONNE_CANTIERI
   }
 })()

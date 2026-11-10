@@ -867,42 +867,47 @@
   // non li scrive mai. pl_commesse tiene solo i dati del piano (cantiere_id).
   function pulito(s) { return s === null || s === undefined ? '' : String(s).replace(/\s+/g, ' ').trim() }
 
-  // ── Stati della commessa (cantieri.stato_commessa, di Anagrafiche) — UN POSTO SOLO (v12) ──
+  // ── Stati della commessa (cantieri.stato_commessa, di Anagrafiche) — UN POSTO SOLO (v12, v15) ──
   // Umberto 9.11.2026: a schermo sempre icona + parola + colore (classe CSS «sc-<chiave>»),
   // mai la parola del database da sola («Da fare» non dice se è l'offerta o il lavoro).
-  //   valori: come sono scritti nel database (si confrontano senza maiuscole né spazi doppi);
-  //           vale anche la parola stessa (es. «Lavoro in corso»).
-  //   gruppo: 'lavoro'  → nell'elenco «📋 Da pianificare» (anche senza date);
-  //           'offerta' → non in elenco, si trova con la ricerca;
-  //           'chiuso'  → Persa / Lavoro finito.
-  // «Lavoro da iniziare» oggi NON ha un valore nel database (arriverà con uno SQL di Anagrafiche):
-  // quando arriva, scriverlo in `valori` qui sotto. Anche prima entra da solo nell'elenco:
-  // lo riconosce la parola («... da iniziare»), e OGNI valore nuovo che non è in questa lista
-  // conta come lavoro (❔ + la sua parola del database): meglio visto in più che nascosto.
+  // v15 (Umberto 10.11, PRIORITÀ 1, uguali in tutte le app): 7 stati in quest'ordine fisso, Persa sempre ultima.
+  //   parola:  il valore NUOVO nel database dopo l'SQL ANAG_12 di Anagrafiche (contratto del Direttore 10.11):
+  //            è anche quello che il Calendario manda alla funzione anag_commessa_cambia_stato.
+  //   valori:  le parole VECCHIE (prima di ANAG_12): Da fare, Inviata, Da iniziare, In corso, Conclusa, Persa.
+  //            Il Calendario capisce le due serie; si confrontano senza maiuscole né spazi doppi.
+  //   plurale: le parole di Umberto per le spunte e i gruppi dell'Elenco.
+  //   gruppo:  'lavoro'    → nell'elenco «📋 Da pianificare» (anche senza date);
+  //            'offerta'   → non in elenco, si trova con la ricerca;
+  //            'rimandata' → come le offerte: si trova con la ricerca;
+  //            'chiuso'    → Persa / Lavoro finito (archivio).
+  // OGNI valore che non è in questa lista: ❔ + la sua parola com'è, conta come lavoro (meglio visto in più che nascosto).
   var STATI_COMMESSA = [
-    { chiave: 'offerta_da_fare', valori: ['Da fare'], icona: '📝', parola: 'Offerta da fare', gruppo: 'offerta' },
-    { chiave: 'offerta_inviata', valori: ['Inviata'], icona: '📤', parola: 'Offerta inviata', gruppo: 'offerta' },
-    { chiave: 'lavoro_da_iniziare', valori: [], icona: '✅', parola: 'Lavoro da iniziare', gruppo: 'lavoro', riconosci: /da\s+iniziare/i },
-    { chiave: 'lavoro_in_corso', valori: ['In corso'], icona: '🔨', parola: 'Lavoro in corso', gruppo: 'lavoro' },
-    { chiave: 'lavoro_finito', valori: ['Conclusa'], icona: '🏁', parola: 'Lavoro finito', gruppo: 'chiuso' },
-    { chiave: 'persa', valori: ['Persa'], icona: '❌', parola: 'Persa', gruppo: 'chiuso' }
+    { chiave: 'offerta_da_fare', valori: ['Da fare'], icona: '📝', parola: 'Offerta da fare', plurale: 'Offerte da fare', gruppo: 'offerta' },
+    { chiave: 'offerta_inviata', valori: ['Inviata'], icona: '📤', parola: 'Offerta inviata', plurale: 'Offerte inviate', gruppo: 'offerta' },
+    { chiave: 'rimandata', valori: [], icona: '⏸️', parola: 'Rimandata', plurale: 'Rimandate', gruppo: 'rimandata' },
+    { chiave: 'lavoro_da_iniziare', valori: ['Da iniziare'], icona: '✅', parola: 'Lavoro da iniziare', plurale: 'Lavori da iniziare', gruppo: 'lavoro' },
+    { chiave: 'lavoro_in_corso', valori: ['In corso'], icona: '🔨', parola: 'Lavoro in corso', plurale: 'Lavori in corso', gruppo: 'lavoro' },
+    { chiave: 'lavoro_finito', valori: ['Conclusa'], icona: '🏁', parola: 'Lavoro finito', plurale: 'Lavori finiti', gruppo: 'chiuso' },
+    { chiave: 'persa', valori: ['Persa'], icona: '❌', parola: 'Persa', plurale: 'Perse', gruppo: 'chiuso' }
   ]
+  function statoPerChiave(chiave) { return STATI_COMMESSA.find(function (x) { return x.chiave === chiave }) || null }
   var TESTO_SENZA_STATO = 'Stato da mettere in Anagrafiche'
   function normStato(s) { return pulito(s).toLowerCase() }
   // Stato di una commessa per lo schermo: { chiave, icona, parola, gruppo, valore, nuovo }
   function statoCommessa(valore) {
     var v = normStato(valore)
-    if (!v) return { chiave: 'senza', icona: '⚠️', parola: TESTO_SENZA_STATO, gruppo: 'senza', valore: null, nuovo: false }
+    // v15 (contratto 10.11): stato vuoto = «❔ Senza stato» (in Pianifica il gruppo resta «Stato da mettere in Anagrafiche»)
+    if (!v) return { chiave: 'senza', icona: '❔', parola: 'Senza stato', gruppo: 'senza', valore: null, nuovo: false }
     var s = STATI_COMMESSA.find(function (x) {
-      return x.valori.some(function (y) { return normStato(y) === v }) || normStato(x.parola) === v || (x.riconosci && x.riconosci.test(v))
+      return x.valori.some(function (y) { return normStato(y) === v }) || normStato(x.parola) === v
     })
-    if (s) return { chiave: s.chiave, icona: s.icona, parola: s.parola, gruppo: s.gruppo, valore: pulito(valore), nuovo: false }
+    if (s) return { chiave: s.chiave, icona: s.icona, parola: s.parola, plurale: s.plurale, gruppo: s.gruppo, valore: pulito(valore), nuovo: false }
     return { chiave: 'nuovo', icona: '❔', parola: pulito(valore), gruppo: 'lavoro', valore: pulito(valore), nuovo: true }
   }
   function testoStato(valore) { var s = statoCommessa(valore); return s.icona + ' ' + s.parola }
   function valoriDelGruppo(g) { return STATI_COMMESSA.filter(function (x) { return x.gruppo === g }).reduce(function (a, x) { return a.concat(x.valori) }, []) }
   var STATI_CHIUSI = valoriDelGruppo('chiuso')          // ['Conclusa', 'Persa']: solo per chi li cercava per nome
-  var STATI_LAVORO = valoriDelGruppo('lavoro')          // oggi ['In corso']; domani anche «Lavoro da iniziare»
+  var STATI_LAVORO = valoriDelGruppo('lavoro')          // parole vecchie: ['Da iniziare', 'In corso']
   function indirizzoCantiere(k) {
     if (!k) return ''
     var loc = pulito(pulito(k.cap) + ' ' + pulito(k.citta))
@@ -922,7 +927,6 @@
       c.collegata = !!k
       c.cantiereMancante = !!c.cantiere_id && !k
       c.stato_commessa = k ? (k.stato_commessa || null) : null
-      c.stato_vecchio = k ? (pulito(k.stato) || null) : null      // cantieri.stato (vecchio): solo informazione
       c.cantiere_tipo = k ? (k.tipo || null) : null
       if (k) {
         c.numero = pulito(k.numero_commessa) || c._proprio.numero || '—'
@@ -953,13 +957,14 @@
   // Le commesse di Anagrafiche non ancora nel Calendario (tipo commessa), divise per gruppo di stato:
   //   lista           = lavoro (Lavoro da iniziare, Lavoro in corso, stati nuovi): si vedono subito
   //   offerte         = Offerta da fare / inviata: si vedono solo cercando (v12, Umberto 9.11)
+  //   rimandate       = ⏸️ Rimandata (v15): come le offerte, solo cercando
   //   listaSenzaStato = senza stato (gruppo separato, scelta A del 2.11)
   //   altriStati      = Perse e Lavori finiti (non compaiono; solo il numero)
   // opz.tutti: ogni stato in lista (per collegare una riga vecchia).
   function commessePianificabili(cantieri, commesse, opz) {
     var usati = {}
     ;(commesse || []).forEach(function (c) { if (c.cantiere_id) usati[c.cantiere_id] = 1 })
-    var out = { lista: [], offerte: [], listaSenzaStato: [], senzaStato: 0, altriStati: 0, giaPianificate: 0 }
+    var out = { lista: [], offerte: [], rimandate: [], listaSenzaStato: [], senzaStato: 0, altriStati: 0, giaPianificate: 0 }
     ;(cantieri || []).forEach(function (k) {
       if (k.tipo === 'interno') return
       if (usati[k.id]) { out.giaPianificate++; return }
@@ -967,11 +972,13 @@
       var g = statoCommessa(k.stato_commessa).gruppo
       if (g === 'lavoro') out.lista.push(k)
       else if (g === 'offerta') out.offerte.push(k)
+      else if (g === 'rimandata') out.rimandate.push(k)
       else if (g === 'senza') { out.listaSenzaStato.push(k); out.senzaStato++ }
       else out.altriStati++
     })
     out.lista.sort(ordinaCantieri)
     out.offerte.sort(ordinaCantieri)
+    out.rimandate.sort(ordinaCantieri)
     out.listaSenzaStato.sort(ordinaCantieri)
     return out
   }
@@ -1004,27 +1011,38 @@
       .sort(ordinaCantieri)
       .map(function (k) { return { cantiere: k, piano: piano[k.id] || null, stato: statoCommessa(k.stato_commessa) } })
   }
-  // Filtro della ricerca: numero, nome, indirizzo, stato (parola del database e parola nuova)
+  // Filtro della ricerca: numero, nome, indirizzo, stato (parola del database e parola nuova), nota dello stato (v15)
   function cercaCantiere(k, testo) {
     var t = pulito(testo).toLowerCase()
     if (!t) return true
     var s = statoCommessa(k.stato_commessa)
-    var tutto = (pulito(k.numero_commessa) + ' ' + pulito(k.nome) + ' ' + indirizzoCantiere(k) + ' ' + pulito(k.stato_commessa) + ' ' + s.parola).toLowerCase()
+    var tutto = (pulito(k.numero_commessa) + ' ' + pulito(k.nome) + ' ' + indirizzoCantiere(k) + ' ' + pulito(k.stato_commessa) + ' ' + s.parola + ' ' + pulito(k.stato_nota)).toLowerCase()
     return t.split(' ').every(function (p) { return tutto.indexOf(p) >= 0 })
   }
   // ── «📋 Elenco» (v14, Umberto 9.11.2026: «come Programma» di Google Calendar) ──
   // Una riga per commessa di Anagrafiche (tipo commessa; il Magazzino no) + i piani vecchi non collegati.
   // Date = primo e ultimo giorno con assegnazioni nel Calendario; senza giorni → «senza date», in fondo.
   // Ogni riga si riconosce per id (cantieri.id → «k:…», pl_commesse.id → «p:…»), MAI per nome.
-  // Filtri (o): stato ('aperte' | chiave di STATI_COMMESSA | 'senza' | 'tutte'), periodo ('tutto' | 'da_oggi' |
-  // 'mese' | '3mesi'), persona (operai.id), cerca (testo). «Aperte» = senza Perse e Lavori finiti (l'archivio
-  // di Anagrafiche); scrivendo nel campo Cerca si trovano anche quelle. Le commesse senza date non hanno un
-  // periodo: restano sempre in fondo (non con il filtro Persona, perché non hanno persone).
+  // v15 (Umberto 10.11): si sceglie con le SPUNTE quali stati vedere e stampare; con più stati l'elenco è diviso a
+  // GRUPPI in quest'ordine: in corso, da iniziare, offerte inviate, offerte da fare, rimandate, (altro), finiti, perse.
+  // Dentro ogni gruppo: per data d'inizio, quelle senza date in fondo al gruppo.
+  // Filtri (o): stati (lista di chiavi di FILTRI_STATO_ELENCO; mancante = STATI_ELENCO_BASE), periodo ('tutto' |
+  // 'mese' | '4mesi'; capisce anche 'da_oggi' e 'Nmesi'), persona (operai.id), cerca (testo). Scrivendo nel campo
+  // Cerca si trovano anche Lavori finiti e Perse (l'archivio) non spuntati. Le commesse senza date non hanno un
+  // periodo: restano sempre (in fondo al loro gruppo), non con il filtro Persona (non hanno persone).
   var STATO_DA_COLLEGARE = { chiave: 'da_collegare', icona: '🔗', parola: 'Da collegare ad Anagrafiche', gruppo: 'senza', valore: null, nuovo: false }
-  var ORDINE_GRUPPO = { lavoro: 0, senza: 1, offerta: 2, chiuso: 3 }
+  // «altro» = senza stato, stato sconosciuto (❔) o piano da collegare: mai nascoste in silenzio, hanno la loro spunta
+  // «altro» (❔ senza stato, stato sconosciuto, 🔗 da collegare) dentro «Tutto», in fondo prima delle Perse (contratto 10.11)
+  var ORDINE_ELENCO = ['lavoro_in_corso', 'lavoro_da_iniziare', 'offerta_inviata', 'offerta_da_fare', 'rimandata', 'lavoro_finito', 'altro', 'persa']
+  var FILTRI_STATO_ELENCO = ORDINE_ELENCO.map(function (k) {
+    var s = statoPerChiave(k)
+    return s ? { chiave: k, icona: s.icona, testo: s.plurale } : { chiave: k, icona: '❔', testo: 'Senza stato o da collegare' }
+  })
+  var STATI_ARCHIVIO_ELENCO = ['lavoro_finito', 'persa']
+  var STATI_ELENCO_BASE = ORDINE_ELENCO.filter(function (k) { return STATI_ARCHIVIO_ELENCO.indexOf(k) < 0 })   // = le «Aperte» della v14
+  function chiaveFiltroStato(s) { return s && statoPerChiave(s.chiave) ? s.chiave : 'altro' }
   var FILTRI_PERIODO = [
-    { k: 'tutto', n: 'Tutte le date' }, { k: 'da_oggi', n: 'Da oggi in poi' },
-    { k: 'mese', n: 'Questo mese' }, { k: '3mesi', n: 'Prossimi 3 mesi' }
+    { k: 'mese', n: 'Questo mese' }, { k: '4mesi', n: 'Prossimi 4 mesi' }, { k: 'tutto', n: 'Tutte le date' }
   ]
   // Ricerca senza accenti e senza maiuscole («ros mar» trova «Rossi Mario», «perche» trova «perché»)
   function normaleRicerca(s) { return pulito(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') }
@@ -1054,23 +1072,56 @@
     var m = MESI[+chiave.slice(5, 7)]
     return m.charAt(0).toUpperCase() + m.slice(1) + ' ' + chiave.slice(0, 4)
   }
-  function passaStatoElenco(r, f, cerca) {
-    if (f === 'tutte') return true
-    if (!f || f === 'aperte') return cerca || r.stato.gruppo !== 'chiuso'
-    if (f === 'senza') return r.stato.gruppo === 'senza'
-    return r.stato.chiave === f
+  // Spunte valide, nell'ordine dei gruppi. null / non lista → quelle di base; lista vuota resta vuota (niente spuntato).
+  function statiElenco(stati) {
+    if (!Array.isArray(stati)) return STATI_ELENCO_BASE.slice()
+    return ORDINE_ELENCO.filter(function (k) { return stati.indexOf(k) >= 0 })
+  }
+  // Come nella v14: con tutte le commesse aperte spuntate (le 5 di lavoro e offerta), scrivendo nel campo Cerca si
+  // trovano anche Lavori finiti e Perse (l'archivio). Con una scelta più stretta la ricerca resta dentro le spunte.
+  function svelaArchivio(stati, cerca) {
+    return !!cerca && STATI_COMMESSA.every(function (s) { return s.gruppo === 'chiuso' || stati.indexOf(s.chiave) >= 0 })
+  }
+  function passaStatoElenco(r, stati, svela) {
+    if (stati.indexOf(r.filtro) >= 0) return true
+    return !!svela && STATI_ARCHIVIO_ELENCO.indexOf(r.filtro) >= 0
+  }
+  // Dal… al… di un periodo (null = tutte le date)
+  function intervalloPeriodoElenco(per, oggi) {
+    if (!per || per === 'tutto') return null
+    if (per === 'da_oggi') return { dal: oggi, al: '9999-12-31' }
+    if (per === 'mese') return { dal: oggi.slice(0, 8) + '01', al: oggi.slice(0, 8) + String(giorniNelMese(anno(oggi), mese(oggi))).padStart(2, '0') }
+    var m = /^(\d+)mesi$/.exec(per)
+    return m ? { dal: oggi, al: piuMesi(oggi, +m[1]) } : null
   }
   function passaPeriodoElenco(r, per, oggi) {
-    if (!r.dal || !per || per === 'tutto') return true
-    if (per === 'da_oggi') return r.al >= oggi
-    var dal = per === 'mese' ? oggi.slice(0, 8) + '01' : oggi
-    var al = per === 'mese' ? oggi.slice(0, 8) + String(giorniNelMese(anno(oggi), mese(oggi))).padStart(2, '0') : piuMesi(oggi, 3)
-    return r.dal <= al && r.al >= dal
+    var iv = intervalloPeriodoElenco(per, oggi)
+    if (!r.dal || !iv) return true
+    return r.dal <= iv.al && r.al >= iv.dal
   }
   function testoRicercaRiga(r) {
     var k = r.cantiere || {}
     return normaleRicerca([r.numero, r.nome, r.cliente, r.localita, r.indirizzo, k.codice_interno, k.stato_commessa, r.stato.parola,
-      r.piano && r.piano.tipo === 'Riparazione' ? 'riparazione' : ''].join(' '))
+      k.stato_nota, r.periodo, r.programma === 'da_programmare' ? 'da programmare' : '', r.piano && r.piano.tipo === 'Riparazione' ? 'riparazione' : ''].join(' '))
+  }
+  // v15 · «⚠️ Da programmare» (Umberto 10.11): Lavori da iniziare senza giorni, per mese d'inizio previsto
+  // (cantieri.mese_inizio_previsto, giorno 1 del mese), quelli senza mese in fondo, poi per numero.
+  function confrontaDaProgrammare(a, b) {
+    if (a.meseInizio && !b.meseInizio) return -1
+    if (!a.meseInizio && b.meseInizio) return 1
+    if (a.meseInizio !== b.meseInizio) return a.meseInizio < b.meseInizio ? -1 : 1
+    return confrontaNumero(a, b)
+  }
+  // Scritta accanto a «✅ Lavoro da iniziare» (nessuno stato in più): 'programmato' (ha giorni nel Calendario)
+  // o 'da_programmare' (nessun giorno). Per gli altri stati: null.
+  function programmaDi(stato, dal) {
+    if (!stato || stato.chiave !== 'lavoro_da_iniziare') return null
+    return dal ? 'programmato' : 'da_programmare'
+  }
+  // «marzo 2027» dal giorno 1 del mese (testo di riserva quando manca periodo_previsto)
+  function testoMese(iso) {
+    if (!iso || !/^\d{4}-\d{2}/.test(iso)) return ''
+    return MESI[+iso.slice(5, 7)] + ' ' + iso.slice(0, 4)
   }
   function confrontaNumero(a, b) {
     if (a.numero && !b.numero) return -1
@@ -1079,13 +1130,17 @@
     return a.nome.localeCompare(b.nome)
   }
   // o: { cantieri, commesse, assegnazioni, clienti (id → contatto | null), oggi, coda (id piano → 1),
-  //      stato, periodo, persona, cerca }
-  // → { gruppi: [{ chiave 'AAAA-MM', titolo, questoMese, righe }], senzaDate: [righe], righe (tutte quelle mostrate),
-  //     nCommesse (di Anagrafiche, Magazzino escluso), nTotale, nArchivioNascoste, cerca }
+  //      stati (spunte), periodo, persona, cerca, daProgrammare (v15: solo «⚠️ Da programmare», spunte e periodo non contano) }
+  // → { gruppi: [{ chiave (di FILTRI_STATO_ELENCO), icona, titolo, righe, nConDate, nSenzaDate }] nell'ordine di Umberto,
+  //     righe (tutte quelle mostrate, gruppo dopo gruppo), senzaDate, conteggi (chiave → quante con gli altri filtri), totali (senza filtri),
+  //     stati (spunte usate), nCommesse (di Anagrafiche, Magazzino escluso), nTotale, nArchivioNascoste, cerca,
+  //     nDaProgrammare (sempre, senza filtri: il numero della Home) }
   function elencoCommesse(o) {
     o = o || {}
     var oggi = o.oggi || oggiIso()
     var cerca = normaleRicerca(o.cerca)
+    var stati = statiElenco(o.stati)
+    var svela = svelaArchivio(stati, cerca)
     var giorni = {}
     ;(o.assegnazioni || []).forEach(function (a) {
       var g = giorni[a.commessa_id] || (giorni[a.commessa_id] = { dal: a.data, al: a.data, persone: {} })
@@ -1101,12 +1156,15 @@
       var cl = clienteDi(k, o.clienti)
       var proprio = p ? (p._proprio || p) : {}
       return {
-        chiave: k ? 'k:' + k.id : 'p:' + p.id, cantiere: k, piano: p, stato: s,
+        chiave: k ? 'k:' + k.id : 'p:' + p.id, cantiere: k, piano: p, stato: s, filtro: chiaveFiltroStato(s),
         numero: k ? pulito(k.numero_commessa) : pulito(proprio.numero),
         nome: k ? pulito(k.nome) : (pulito(proprio.nome) || 'Senza nome'),
         cliente: cl.testo, clienteStato: cl.stato,
         localita: k ? localitaDi(k) : pulito(proprio.indirizzo),
         indirizzo: k ? indirizzoCantiere(k) : pulito(proprio.indirizzo),
+        nota: k ? pulito(k.stato_nota) : '', richiamo: k && pulito(k.richiamo_il) ? pulito(k.richiamo_il).slice(0, 10) : null,
+        periodo: k ? pulito(k.periodo_previsto) : '', meseInizio: k && pulito(k.mese_inizio_previsto) ? pulito(k.mese_inizio_previsto).slice(0, 10) : null,
+        programma: programmaDi(s, g ? g.dal : null),
         dal: g ? g.dal : null, al: g ? g.al : null, persone: g ? Object.keys(g.persone) : [],
         coda: !!(p && o.coda && o.coda[p.id]), archivio: s.gruppo === 'chiuso'
       }
@@ -1124,35 +1182,115 @@
       if (c.interna || (c.cantiere_id && cantiereId[c.cantiere_id])) return
       tutte.push(riga(null, c, STATO_DA_COLLEGARE))
     })
-    var nArchivioNascoste = 0
+    var nArchivioNascoste = 0, conteggi = {}, totali = {}
+    ORDINE_ELENCO.forEach(function (k) { conteggi[k] = 0; totali[k] = 0 })
+    tutte.forEach(function (r) { totali[r.filtro]++ })
+    var nDaProgrammare = tutte.filter(function (r) { return r.programma === 'da_programmare' }).length
+    var passaCerca = function (r) { return !cerca || cerca.split(' ').every(function (p) { return testoRicercaRiga(r).indexOf(p) >= 0 }) }
+    if (o.daProgrammare) {
+      var dp = tutte.filter(function (r) { return r.programma === 'da_programmare' && passaCerca(r) }).sort(confrontaDaProgrammare)
+      return {
+        gruppi: dp.length ? [{ chiave: 'da_programmare', icona: '⚠️', titolo: 'Da programmare', righe: dp, nConDate: 0, nSenzaDate: dp.length }] : [],
+        righe: dp, senzaDate: dp, conteggi: conteggi, totali: totali, stati: stati, svelaArchivio: false, daProgrammare: true,
+        nCommesse: nCommesse, nTotale: tutte.length, nArchivioNascoste: 0, cerca: !!cerca, nDaProgrammare: nDaProgrammare
+      }
+    }
     var righe = tutte.filter(function (r) {
       if (o.persona && r.persone.indexOf(o.persona) < 0) return false
       if (!passaPeriodoElenco(r, o.periodo, oggi)) return false
-      if (cerca && !cerca.split(' ').every(function (p) { return testoRicercaRiga(r).indexOf(p) >= 0 })) return false
-      if (!passaStatoElenco(r, o.stato, !!cerca)) {
-        if (r.archivio && (!o.stato || o.stato === 'aperte')) nArchivioNascoste++
+      if (!passaCerca(r)) return false
+      conteggi[r.filtro]++
+      if (!passaStatoElenco(r, stati, svela)) {
+        if (r.archivio) nArchivioNascoste++
         return false
       }
       return true
     })
-    var conDate = righe.filter(function (r) { return r.dal }).sort(function (a, b) {
+    function perData(a, b) {
       if (a.dal !== b.dal) return a.dal < b.dal ? -1 : 1
       if (a.al !== b.al) return a.al < b.al ? -1 : 1
       return confrontaNumero(a, b)
-    })
-    var gruppi = []
-    conDate.forEach(function (r) {
-      var ch = r.dal.slice(0, 7), g = gruppi[gruppi.length - 1]
-      if (!g || g.chiave !== ch) { g = { chiave: ch, titolo: titoloMese(ch), questoMese: ch === oggi.slice(0, 7), righe: [] }; gruppi.push(g) }
-      g.righe.push(r)
-    })
-    var senzaDate = righe.filter(function (r) { return !r.dal }).sort(function (a, b) {
-      var d = ORDINE_GRUPPO[a.stato.gruppo] - ORDINE_GRUPPO[b.stato.gruppo]
-      return d || confrontaNumero(a, b)
+    }
+    var gruppi = [], tutteInOrdine = [], senzaDate = []
+    FILTRI_STATO_ELENCO.forEach(function (f) {
+      var mie = righe.filter(function (r) { return r.filtro === f.chiave })
+      if (!mie.length) return
+      var con = mie.filter(function (r) { return r.dal }).sort(perData)
+      var senza = mie.filter(function (r) { return !r.dal }).sort(confrontaNumero)
+      gruppi.push({ chiave: f.chiave, icona: f.icona, titolo: f.testo, righe: con.concat(senza), nConDate: con.length, nSenzaDate: senza.length })
+      tutteInOrdine = tutteInOrdine.concat(con, senza)
+      senzaDate = senzaDate.concat(senza)
     })
     return {
-      gruppi: gruppi, senzaDate: senzaDate, righe: conDate.concat(senzaDate),
-      nCommesse: nCommesse, nTotale: tutte.length, nArchivioNascoste: nArchivioNascoste, cerca: !!cerca
+      gruppi: gruppi, righe: tutteInOrdine, senzaDate: senzaDate, conteggi: conteggi, totali: totali, stati: stati, svelaArchivio: svela,
+      nCommesse: nCommesse, nTotale: tutte.length, nArchivioNascoste: nArchivioNascoste, cerca: !!cerca, nDaProgrammare: nDaProgrammare
+    }
+  }
+
+  // ── v15 · Cambiare lo stato della commessa dal Calendario (Umberto 10.11.2026; contratto ANAG_12 definitivo) ──
+  // La tabella cantieri è di Anagrafiche: il Calendario NON la scrive. Chiama la funzione del database
+  // anag_commessa_cambia_stato(p_cantiere, p_stato, p_nota, p_richiamo, p_periodo, p_mese_inizio).
+  // La funzione SCRIVE I VALORI COME LI RICEVE (un valore non ripassato si svuota): per questo si mandano SEMPRE tutti,
+  // partendo da quelli di adesso (la finestra li ha già scritti). p_richiamo vale solo per Rimandata (con gli altri
+  // stati il database lo mette NULL: qui si manda null). Il mese va al giorno 1. Lo storico lo scrive un trigger.
+  // Qui solo i controlli prima della chiamata e la traduzione delle risposte in italiano (niente pagina, niente rete).
+  var TESTO_FUNZIONE_MANCA = 'Si attiva dopo l\'aggiornamento del database'
+  var TESTO_NIENTE_DA_CAMBIARE = 'Niente da cambiare'
+  function meseUno(x) {
+    var m = pulito(x)
+    if (/^\d{4}-\d{2}$/.test(m)) return m + '-01'
+    if (/^\d{4}-\d{2}-\d{2}/.test(m)) return m.slice(0, 8) + '01'
+    return m
+  }
+  // valori: { nota, richiamo, periodo, meseInizio ('AAAA-MM' o data) } come sono nella finestra
+  // attuale: la riga di cantieri di adesso (stato_commessa, stato_nota, richiamo_il, periodo_previsto, mese_inizio_previsto)
+  // → { ok: true, parametri } | { ok: false, messaggio, niente (true = niente da cambiare) }
+  function richiestaCambioStato(cantiereId, chiave, valori, attuale) {
+    valori = valori || {}; attuale = attuale || {}
+    var s = statoPerChiave(chiave)
+    if (!cantiereId) return { ok: false, messaggio: 'Commessa non riconosciuta (manca l\'id): niente cambiato.' }
+    if (!s) return { ok: false, messaggio: 'Scegli uno dei 7 stati.' }
+    var n = pulito(valori.nota)
+    if (n.length > 500) return { ok: false, messaggio: 'La nota è troppo lunga (' + n.length + ' caratteri, al massimo 500).' }
+    var r = s.chiave === 'rimandata' ? pulito(valori.richiamo).slice(0, 10) : ''
+    if (r && !/^\d{4}-\d{2}-\d{2}$/.test(r)) return { ok: false, messaggio: 'La data «Richiamare il» non è una data valida.' }
+    var per = pulito(valori.periodo)
+    if (per.length > 200) return { ok: false, messaggio: 'Il periodo previsto è troppo lungo (al massimo 200 caratteri).' }
+    var mi = meseUno(valori.meseInizio)
+    if (mi && !/^\d{4}-(0[1-9]|1[0-2])-01$/.test(mi)) return { ok: false, messaggio: 'Il mese di inizio non è valido: scegli mese e anno.' }
+    var prima = statoCommessa(attuale.stato_commessa)
+    var uguale = prima.chiave === s.chiave && !prima.nuovo && n === pulito(attuale.stato_nota) &&
+      r === (s.chiave === 'rimandata' ? pulito(attuale.richiamo_il).slice(0, 10) : '') &&
+      per === pulito(attuale.periodo_previsto) && mi === meseUno(attuale.mese_inizio_previsto)
+    if (uguale) return { ok: false, niente: true, messaggio: TESTO_NIENTE_DA_CAMBIARE + ': stato «' + s.icona + ' ' + s.parola + '», nota e periodo sono già questi.' }
+    return { ok: true, parametri: { p_cantiere: cantiereId, p_stato: s.parola, p_nota: n || null, p_richiamo: r || null, p_periodo: per || null, p_mese_inizio: mi || null } }
+  }
+  // Errore della funzione (o della rete) → { tipo: 'manca' | 'permesso' | 'sessione' | 'rete' | 'rifiutato', testo }
+  function erroreCambioStato(e) {
+    e = e || {}
+    var codice = String(e.code || ''), msg = String(e.message || e.details || e.hint || e.messaggio || e.errore || e || '')
+    var tutto = codice + ' ' + msg
+    if (/PGRST202/.test(codice) || /could not find the function|function .*does not exist/i.test(msg)) return { tipo: 'manca', testo: TESTO_FUNZIONE_MANCA + ': nel database manca ancora la funzione per cambiare lo stato.' }
+    if (/JWT|not authenticated|401/i.test(tutto)) return { tipo: 'sessione', testo: 'Sessione scaduta: entra di nuovo. Lo stato NON è cambiato.' }
+    if (/42501|permission denied|non autorizzat|non hai il permesso|permesso negato|not allowed/i.test(tutto)) return { tipo: 'permesso', testo: 'Non hai il permesso di cambiare lo stato. Lo stato NON è cambiato.' }
+    if (/failed to fetch|networkerror|load failed|fetch/i.test(msg) && !codice) return { tipo: 'rete', testo: 'Collegamento al database non riuscito: controlla la rete e riprova. Lo stato NON è cambiato.' }
+    if (/23514|check constraint/i.test(tutto)) return { tipo: 'rifiutato', testo: 'Il database non accetta questo stato (manca ancora l\'aggiornamento di Anagrafiche?). Lo stato NON è cambiato.' }
+    return { tipo: 'rifiutato', testo: 'Il database ha rifiutato il cambio di stato: ' + (msg || 'motivo non indicato') + '. Lo stato NON è cambiato.' }
+  }
+  // Risposta { ok, cambiato, prima, dopo, nota, richiamo_il, periodo_previsto, mese_inizio_previsto }
+  // → { ok: true, cambiato, prima, dopo, valori: { stato_commessa, stato_nota, richiamo_il, periodo_previsto, mese_inizio_previsto } }
+  //   (valori: quelli scritti dal database; se la risposta non li ha, quelli mandati) | { ok: false, errore }
+  function rispostaCambioStato(data, parametri) {
+    parametri = parametri || {}
+    var d = Array.isArray(data) ? data[0] : data
+    if (typeof d === 'string') { try { d = JSON.parse(d) } catch (x) { d = null } }
+    if (!d || typeof d !== 'object') return { ok: false, errore: { tipo: 'rifiutato', testo: 'Il database non ha detto se lo stato è cambiato. Ricarica la pagina e controlla.' } }
+    if (d.ok !== true) return { ok: false, errore: erroreCambioStato({ code: d.code || '', message: d.messaggio || d.errore || d.motivo || d.message || 'risposta «non riuscito» senza motivo' }) }
+    var da = function (k, p) { return k in d ? (d[k] === undefined ? null : d[k]) : (parametri[p] === undefined ? null : parametri[p]) }
+    var dopo = pulito(d.dopo) || parametri.p_stato || null
+    return {
+      ok: true, cambiato: d.cambiato !== false, prima: d.prima === undefined ? null : d.prima, dopo: dopo,
+      valori: { stato_commessa: dopo, stato_nota: da('nota', 'p_nota'), richiamo_il: da('richiamo_il', 'p_richiamo'), periodo_previsto: da('periodo_previsto', 'p_periodo'), mese_inizio_previsto: da('mese_inizio_previsto', 'p_mese_inizio') }
     }
   }
 
@@ -1471,7 +1609,7 @@
           var quando = primo > oggiC ? 'inizia ' + (primo === aggiungiGiorni(oggiC, 1) ? 'domani, ' : '') + fmtGiorno(primo)
             : primo === oggiC ? 'inizia oggi' : 'è iniziata ' + fmtGiorno(primo)
           push('inizio', 'in|' + c.id + '|' + primo + '|' + (c.stato_commessa || ''), c.numero + ' ' + c.nome + ' ' + quando +
-            ', ma in Anagrafiche non è «🔨 Lavoro in corso» (stato: ' + statoTxt + '). Il Calendario non cambia lo stato: se è giusto, mettilo in Anagrafiche.', primo, { commessa_id: c.id })
+            ', ma in Anagrafiche non è «🔨 Lavoro in corso» (stato: ' + statoTxt + '). Il Calendario non cambia lo stato da solo: se è giusto, cambialo tu (scheda della commessa → «✏️ Cambia stato», o in Anagrafiche).', primo, { commessa_id: c.id })
         }
         if (sc.gruppo === 'chiuso') {
           var future = dateC.filter(function (d) { return d >= oggiC })
@@ -1717,6 +1855,10 @@
     // «📋 Elenco» (v14)
     elencoCommesse: elencoCommesse, clienteDi: clienteDi, nomeContatto: nomeContatto, normaleRicerca: normaleRicerca,
     FILTRI_PERIODO: FILTRI_PERIODO, STATO_DA_COLLEGARE: STATO_DA_COLLEGARE, CLIENTE_NON_LEGGIBILE: CLIENTE_NON_LEGGIBILE,
+    // v15: spunte e gruppi dell'Elenco, cambio stato
+    ORDINE_ELENCO: ORDINE_ELENCO, FILTRI_STATO_ELENCO: FILTRI_STATO_ELENCO, STATI_ELENCO_BASE: STATI_ELENCO_BASE, STATI_ARCHIVIO_ELENCO: STATI_ARCHIVIO_ELENCO,
+    statiElenco: statiElenco, intervalloPeriodoElenco: intervalloPeriodoElenco, statoPerChiave: statoPerChiave,
+    programmaDi: programmaDi, testoMese: testoMese, richiestaCambioStato: richiestaCambioStato, TESTO_NIENTE_DA_CAMBIARE: TESTO_NIENTE_DA_CAMBIARE, erroreCambioStato: erroreCambioStato, rispostaCambioStato: rispostaCambioStato, TESTO_FUNZIONE_MANCA: TESTO_FUNZIONE_MANCA,
     inArchivio: inArchivio, testoArchivio: testoArchivio, personeArchivio: personeArchivio, insiemeArchivio: insiemeArchivio, giornataStorica: giornataStorica,
     // Esterni (v6)
     RAPPORTO_ESTERNO: RAPPORTO_ESTERNO, eEsterno: eEsterno, insiemeEsterni: insiemeEsterni, gruppiPersone: gruppiPersone,
