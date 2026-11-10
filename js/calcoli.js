@@ -1012,6 +1012,150 @@
     var tutto = (pulito(k.numero_commessa) + ' ' + pulito(k.nome) + ' ' + indirizzoCantiere(k) + ' ' + pulito(k.stato_commessa) + ' ' + s.parola).toLowerCase()
     return t.split(' ').every(function (p) { return tutto.indexOf(p) >= 0 })
   }
+  // ── «📋 Elenco» (v14, Umberto 9.11.2026: «come Programma» di Google Calendar) ──
+  // Una riga per commessa di Anagrafiche (tipo commessa; il Magazzino no) + i piani vecchi non collegati.
+  // Date = primo e ultimo giorno con assegnazioni nel Calendario; senza giorni → «senza date», in fondo.
+  // Ogni riga si riconosce per id (cantieri.id → «k:…», pl_commesse.id → «p:…»), MAI per nome.
+  // Filtri (o): stato ('aperte' | chiave di STATI_COMMESSA | 'senza' | 'tutte'), periodo ('tutto' | 'da_oggi' |
+  // 'mese' | '3mesi'), persona (operai.id), cerca (testo). «Aperte» = senza Perse e Lavori finiti (l'archivio
+  // di Anagrafiche); scrivendo nel campo Cerca si trovano anche quelle. Le commesse senza date non hanno un
+  // periodo: restano sempre in fondo (non con il filtro Persona, perché non hanno persone).
+  var STATO_DA_COLLEGARE = { chiave: 'da_collegare', icona: '🔗', parola: 'Da collegare ad Anagrafiche', gruppo: 'senza', valore: null, nuovo: false }
+  var ORDINE_GRUPPO = { lavoro: 0, senza: 1, offerta: 2, chiuso: 3 }
+  var FILTRI_PERIODO = [
+    { k: 'tutto', n: 'Tutte le date' }, { k: 'da_oggi', n: 'Da oggi in poi' },
+    { k: 'mese', n: 'Questo mese' }, { k: '3mesi', n: 'Prossimi 3 mesi' }
+  ]
+  // Ricerca senza accenti e senza maiuscole («ros mar» trova «Rossi Mario», «perche» trova «perché»)
+  function normaleRicerca(s) { return pulito(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') }
+  function nomeContatto(k) {
+    if (!k) return ''
+    return pulito(k.ragione_sociale) || pulito(pulito(k.nome) + ' ' + pulito(k.cognome))
+  }
+  var CLIENTE_NON_LEGGIBILE = 'cliente non leggibile'
+  // Cliente di una commessa: contatto della Rubrica (cantieri.cliente_id → tm_contatti), altrimenti
+  // «committente» (copia del nome scritta da Anagrafiche). Mai vuoto in silenzio.
+  //   { testo, stato: 'ok' | 'non_leggibile' | 'manca' }
+  function clienteDi(k, clienti) {
+    if (!k) return { testo: '', stato: 'manca' }
+    var c = k.cliente_id && clienti ? clienti[k.cliente_id] : null
+    if (c && nomeContatto(c)) return { testo: nomeContatto(c), stato: 'ok' }
+    if (pulito(k.committente)) return { testo: pulito(k.committente), stato: 'ok' }
+    if (k.cliente_id) return { testo: CLIENTE_NON_LEGGIBILE, stato: 'non_leggibile' }
+    return { testo: '', stato: 'manca' }
+  }
+  function localitaDi(k) { return k ? (pulito(k.citta) || pulito(k.luogo)) : '' }
+  function piuMesi(iso, n) {
+    var a = anno(iso), m = mese(iso) + n, g = +iso.slice(8, 10)
+    a += Math.floor((m - 1) / 12); m = ((m - 1) % 12 + 12) % 12 + 1
+    return isoDa(a, m, Math.min(g, giorniNelMese(a, m)))
+  }
+  function titoloMese(chiave) {
+    var m = MESI[+chiave.slice(5, 7)]
+    return m.charAt(0).toUpperCase() + m.slice(1) + ' ' + chiave.slice(0, 4)
+  }
+  function passaStatoElenco(r, f, cerca) {
+    if (f === 'tutte') return true
+    if (!f || f === 'aperte') return cerca || r.stato.gruppo !== 'chiuso'
+    if (f === 'senza') return r.stato.gruppo === 'senza'
+    return r.stato.chiave === f
+  }
+  function passaPeriodoElenco(r, per, oggi) {
+    if (!r.dal || !per || per === 'tutto') return true
+    if (per === 'da_oggi') return r.al >= oggi
+    var dal = per === 'mese' ? oggi.slice(0, 8) + '01' : oggi
+    var al = per === 'mese' ? oggi.slice(0, 8) + String(giorniNelMese(anno(oggi), mese(oggi))).padStart(2, '0') : piuMesi(oggi, 3)
+    return r.dal <= al && r.al >= dal
+  }
+  function testoRicercaRiga(r) {
+    var k = r.cantiere || {}
+    return normaleRicerca([r.numero, r.nome, r.cliente, r.localita, r.indirizzo, k.codice_interno, k.stato_commessa, r.stato.parola,
+      r.piano && r.piano.tipo === 'Riparazione' ? 'riparazione' : ''].join(' '))
+  }
+  function confrontaNumero(a, b) {
+    if (a.numero && !b.numero) return -1
+    if (!a.numero && b.numero) return 1
+    if (a.numero !== b.numero) return a.numero < b.numero ? 1 : -1           // le più nuove in alto (come Pianifica)
+    return a.nome.localeCompare(b.nome)
+  }
+  // o: { cantieri, commesse, assegnazioni, clienti (id → contatto | null), oggi, coda (id piano → 1),
+  //      stato, periodo, persona, cerca }
+  // → { gruppi: [{ chiave 'AAAA-MM', titolo, questoMese, righe }], senzaDate: [righe], righe (tutte quelle mostrate),
+  //     nCommesse (di Anagrafiche, Magazzino escluso), nTotale, nArchivioNascoste, cerca }
+  function elencoCommesse(o) {
+    o = o || {}
+    var oggi = o.oggi || oggiIso()
+    var cerca = normaleRicerca(o.cerca)
+    var giorni = {}
+    ;(o.assegnazioni || []).forEach(function (a) {
+      var g = giorni[a.commessa_id] || (giorni[a.commessa_id] = { dal: a.data, al: a.data, persone: {} })
+      if (a.data < g.dal) g.dal = a.data
+      if (a.data > g.al) g.al = a.data
+      if (a.persona_id) g.persone[a.persona_id] = 1
+    })
+    var cantiereId = {}, pianoPer = {}
+    ;(o.cantieri || []).forEach(function (k) { cantiereId[k.id] = 1 })
+    ;(o.commesse || []).forEach(function (c) { if (c.cantiere_id && cantiereId[c.cantiere_id]) pianoPer[c.cantiere_id] = c })
+    function riga(k, p, s) {
+      var g = p ? giorni[p.id] : null
+      var cl = clienteDi(k, o.clienti)
+      var proprio = p ? (p._proprio || p) : {}
+      return {
+        chiave: k ? 'k:' + k.id : 'p:' + p.id, cantiere: k, piano: p, stato: s,
+        numero: k ? pulito(k.numero_commessa) : pulito(proprio.numero),
+        nome: k ? pulito(k.nome) : (pulito(proprio.nome) || 'Senza nome'),
+        cliente: cl.testo, clienteStato: cl.stato,
+        localita: k ? localitaDi(k) : pulito(proprio.indirizzo),
+        indirizzo: k ? indirizzoCantiere(k) : pulito(proprio.indirizzo),
+        dal: g ? g.dal : null, al: g ? g.al : null, persone: g ? Object.keys(g.persone) : [],
+        coda: !!(p && o.coda && o.coda[p.id]), archivio: s.gruppo === 'chiuso'
+      }
+    }
+    var tutte = [], nCommesse = 0
+    ;(o.cantieri || []).forEach(function (k) {
+      if (k.tipo === 'interno') return
+      var p = pianoPer[k.id] || null
+      if (p && p.interna) return
+      nCommesse++
+      tutte.push(riga(k, p, statoCommessa(k.stato_commessa)))
+    })
+    // piani senza commessa di Anagrafiche (righe vecchie della v2, o commessa non trovata): si vedono, «da collegare»
+    ;(o.commesse || []).forEach(function (c) {
+      if (c.interna || (c.cantiere_id && cantiereId[c.cantiere_id])) return
+      tutte.push(riga(null, c, STATO_DA_COLLEGARE))
+    })
+    var nArchivioNascoste = 0
+    var righe = tutte.filter(function (r) {
+      if (o.persona && r.persone.indexOf(o.persona) < 0) return false
+      if (!passaPeriodoElenco(r, o.periodo, oggi)) return false
+      if (cerca && !cerca.split(' ').every(function (p) { return testoRicercaRiga(r).indexOf(p) >= 0 })) return false
+      if (!passaStatoElenco(r, o.stato, !!cerca)) {
+        if (r.archivio && (!o.stato || o.stato === 'aperte')) nArchivioNascoste++
+        return false
+      }
+      return true
+    })
+    var conDate = righe.filter(function (r) { return r.dal }).sort(function (a, b) {
+      if (a.dal !== b.dal) return a.dal < b.dal ? -1 : 1
+      if (a.al !== b.al) return a.al < b.al ? -1 : 1
+      return confrontaNumero(a, b)
+    })
+    var gruppi = []
+    conDate.forEach(function (r) {
+      var ch = r.dal.slice(0, 7), g = gruppi[gruppi.length - 1]
+      if (!g || g.chiave !== ch) { g = { chiave: ch, titolo: titoloMese(ch), questoMese: ch === oggi.slice(0, 7), righe: [] }; gruppi.push(g) }
+      g.righe.push(r)
+    })
+    var senzaDate = righe.filter(function (r) { return !r.dal }).sort(function (a, b) {
+      var d = ORDINE_GRUPPO[a.stato.gruppo] - ORDINE_GRUPPO[b.stato.gruppo]
+      return d || confrontaNumero(a, b)
+    })
+    return {
+      gruppi: gruppi, senzaDate: senzaDate, righe: conDate.concat(senzaDate),
+      nCommesse: nCommesse, nTotale: tutte.length, nArchivioNascoste: nArchivioNascoste, cerca: !!cerca
+    }
+  }
+
   // Persone da pianificare: da operai, escluse quelle non attive e quelle con
   // fine rapporto passata (operai.data_fine_rapporto < oggi). Chi esce in futuro
   // resta fino a quel giorno (l'avviso 11 non lo cerca dopo la fine).
@@ -1570,6 +1714,9 @@
     indirizzoCantiere: indirizzoCantiere, daPianificare: daPianificare, cercaCommesse: cercaCommesse,
     pulito: pulito, unisciCantieri: unisciCantieri, commessePianificabili: commessePianificabili, senzaStatoDaMettere: senzaStatoDaMettere, TESTO_SENZA_STATO: TESTO_SENZA_STATO, cercaCantiere: cercaCantiere,
     commessaChiusa: commessaChiusa, personeAttive: personeAttive,
+    // «📋 Elenco» (v14)
+    elencoCommesse: elencoCommesse, clienteDi: clienteDi, nomeContatto: nomeContatto, normaleRicerca: normaleRicerca,
+    FILTRI_PERIODO: FILTRI_PERIODO, STATO_DA_COLLEGARE: STATO_DA_COLLEGARE, CLIENTE_NON_LEGGIBILE: CLIENTE_NON_LEGGIBILE,
     inArchivio: inArchivio, testoArchivio: testoArchivio, personeArchivio: personeArchivio, insiemeArchivio: insiemeArchivio, giornataStorica: giornataStorica,
     // Esterni (v6)
     RAPPORTO_ESTERNO: RAPPORTO_ESTERNO, eEsterno: eEsterno, insiemeEsterni: insiemeEsterni, gruppiPersone: gruppiPersone,

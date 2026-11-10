@@ -18,6 +18,9 @@
    per gli id usati. Il Calendario non scrive mai operai né tm_contatti.
    cantieri (= commesse di Anagrafiche): si LEGGONO id, nome, numero_commessa,
    stato_commessa, tipo, indirizzo. Il Calendario non scrive mai cantieri né operai.
+   v14 («📋 Elenco»): anche il cliente, cantieri.cliente_id + committente (copia del nome
+   scritta da Anagrafiche); il nome del contatto da tm_contatti (id, ragione_sociale, nome,
+   cognome), solo per gli id usati. Colonne mancanti → si legge come la v13, senza cliente.
    ═══════════════════════════════════════════════════════════════════════════ */
 var PLD = (function () {
   'use strict'
@@ -77,7 +80,7 @@ var PLD = (function () {
   function colonnaMancante(e) {
     var o = (e && e.originale) || e || {}
     var t = (o.code || '') + ' ' + (o.message || '') + ' ' + (e && e.message || '')
-    return /42703|PGRST204/.test(t) || /column .*(rapporto|ditta_id).* does not exist/i.test(t)
+    return /42703|PGRST204/.test(t) || /column .*(rapporto|ditta_id|committente|cliente_id).* does not exist/i.test(t)
   }
 
   // Persone con rapporto e ditta. Se la colonna rapporto manca: si leggono come
@@ -115,7 +118,41 @@ var PLD = (function () {
       return { ditte: null, errore: 'Nomi delle ditte non leggibili: ' + ((e && e.message) || e) }
     }
   }
-  var COLONNE_CANTIERI = 'id,nome,numero_commessa,stato_commessa,stato,tipo,via,cap,citta,luogo'
+  var COLONNE_CANTIERI_V13 = 'id,nome,numero_commessa,stato_commessa,stato,tipo,via,cap,citta,luogo'
+  var COLONNE_CANTIERI = COLONNE_CANTIERI_V13 + ',committente,cliente_id'
+  var TESTO_SENZA_CLIENTE = 'Nel database mancano le colonne del cliente delle commesse (cantieri.cliente_id / committente): nell’Elenco il cliente non si vede.'
+
+  // v14: commesse di Anagrafiche con il cliente. Colonna mancante → come la v13 + motivo. { cantieri, senzaCliente }
+  async function leggiCantieri() {
+    try {
+      return { cantieri: await leggi('cantieri', COLONNE_CANTIERI, 'nome'), senzaCliente: null }
+    } catch (e) {
+      if (e && e.sessioneAssente) throw e
+      if (!colonnaMancante(e)) throw e
+      return { cantieri: await leggi('cantieri', COLONNE_CANTIERI_V13, 'nome'), senzaCliente: TESTO_SENZA_CLIENTE }
+    }
+  }
+  // v14: nomi dei clienti (tm_contatti), solo per i cliente_id usati. { clienti: { id: riga } | null, errore }
+  // Righe mancanti (RLS che nega in silenzio) = «cliente non leggibile» nell'Elenco, mai vuoto.
+  async function leggiClienti(cantieri) {
+    var ids = []
+    ;(cantieri || []).forEach(function (k) { if (k.cliente_id && ids.indexOf(k.cliente_id) < 0) ids.push(k.cliente_id) })
+    if (!ids.length) return { clienti: {}, errore: null }
+    try {
+      var righe = []
+      for (var i = 0; i < ids.length; i += 200) {
+        var pezzo = ids.slice(i, i + 200)
+        righe = righe.concat(await leggi('tm_contatti', COLONNE_DITTE, null, function (q) { return q.in('id', pezzo) }))
+      }
+      var clienti = {}
+      righe.forEach(function (r) { clienti[r.id] = r })
+      var mancano = ids.filter(function (id) { return !clienti[id] }).length
+      return { clienti: clienti, errore: mancano ? 'Nomi dei clienti non leggibili per ' + mancano + (mancano === 1 ? ' contatto' : ' contatti') + ' (il database non li dà a questo utente).' : null }
+    } catch (e) {
+      if (e && e.sessioneAssente) throw e
+      return { clienti: null, errore: 'Nomi dei clienti non leggibili: ' + ((e && e.message) || e) }
+    }
+  }
 
   // Versione dello schema pl_ nel database: 2 = PL_02 applicato (commesse da
   // Anagrafiche). Se la funzione manca → 1 (solo PL_01): l'app funziona, ma
@@ -204,7 +241,7 @@ var PLD = (function () {
       leggi('pl_meteo_normali', '*', 'stazione,mese'),
       leggi('pl_avvisi_ignorati', 'chiave'),
       leggiOperai(),
-      leggi('cantieri', COLONNE_CANTIERI, 'nome'),
+      leggiCantieri(),
       leggi('profili', 'id,nome,ruolo', 'nome'),
       versioneDb()
     ])
@@ -216,18 +253,21 @@ var PLD = (function () {
     }
     // Zero commesse di Anagrafiche mentre il piano ne ha di collegate = lettura negata
     // in silenzio: errore, non un piano con i nomi sbagliati.
-    if (!risultati[12].length && risultati[5].some(function (c) { return c.cantiere_id })) {
+    var ca = risultati[12]
+    if (!ca.cantieri.length && risultati[5].some(function (c) { return c.cantiere_id })) {
       throw new Error('Commesse di Anagrafiche non leggibili (0 righe dalla tabella cantieri, ma il piano ne usa). Il piano NON è attendibile.')
     }
     var op = risultati[11]
     var di = await leggiDitte(op.operai)
+    var cl = await leggiClienti(ca.cantieri)
     return {
       versioneDb: risultati[14],
+      senzaCliente: ca.senzaCliente, clienti: cl.clienti, erroreClienti: cl.errore,
       senzaRapporto: op.senzaRapporto, ditte: di.ditte, erroreDitte: di.errore,
       imp: risultati[0][0], periodi: risultati[1], festivi: risultati[2], chiusure: risultati[3],
       assenze: risultati[4], commesse: risultati[5], capitoli: risultati[6], assegnazioni: risultati[7],
       previste: risultati[8], meteo: risultati[9], ignorati: risultati[10].map(function (r) { return r.chiave }),
-      operai: op.operai, cantieri: risultati[12], profili: risultati[13]
+      operai: op.operai, cantieri: ca.cantieri, profili: risultati[13]
     }
   }
 
@@ -236,6 +276,7 @@ var PLD = (function () {
     controllaAccesso: controllaAccesso, leggi: leggi, inserisci: inserisci, aggiorna: aggiorna,
     salvaUpsert: salvaUpsert, eliminaId: eliminaId, caricaTutto: caricaTutto, versioneDb: versioneDb,
     leggiOperai: leggiOperai, leggiDitte: leggiDitte, colonnaMancante: colonnaMancante,
+    leggiCantieri: leggiCantieri, leggiClienti: leggiClienti,
     COLONNE_OPERAI: COLONNE_OPERAI, COLONNE_CANTIERI: COLONNE_CANTIERI
   }
 })()

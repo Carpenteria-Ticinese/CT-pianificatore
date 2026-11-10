@@ -10,6 +10,8 @@
    v6: ST.persone = solo Dipendenti (Riempi, assenze, ferie da recuperare,
    «senza lavoro»); ST.esterni = Esterni, nel loro gruppo con il nome della
    ditta, assegnati solo a mano (pannello Assegna, trascinare).
+   v14: terza vista «📋 Elenco» (ST.vista = 'elenco'): tutte le commesse in righe,
+   per data d'inizio, con filtri, ricerca e stampa A4 (sezione «Elenco»).
    ═══════════════════════════════════════════════════════════════════════════ */
 'use strict'
 var C = window.PLC, V = window.PLViaggio, D = window.PLD
@@ -19,7 +21,9 @@ var ST = {
   dati: null, profilo: null, email: '',
   vista: 'cantieri', zoom: 'mese', ancora: C.oggiIso(), pagina: 'piano', mostraArchivio: false,
   cal: null, nomi: {}, persone: [], esterni: [], esterniSet: {}, perId: {}, capPer: {}, assPer: {}, rie: {},
-  meteoMap: {}, magazzino: null, coda: [], avvisi: []
+  meteoMap: {}, magazzino: null, coda: [], avvisi: [],
+  // v14 · filtri della vista «📋 Elenco»: restano quando si cambia vista (e nella sessione del browser)
+  elenco: { cerca: '', stato: 'aperte', periodo: 'tutto', persona: '' }
 }
 var PALETTE = ['#2d6a4f', '#1d4ed8', '#b45309', '#7c3aed', '#be123c', '#0f766e', '#4d7c0f', '#c2410c', '#0369a1', '#a21caf']
 var STAZIONI = { MAG: 'Magadino', LUG: 'Lugano' }
@@ -168,7 +172,7 @@ function hInizio() {
   H.attiva = true; H.coda = []; H.occupata = false
   var h = String(window.location.hash || '').replace('#', '')
   if (h === 'impostazioni') ST.pagina = 'impostazioni'
-  else if (h === 'persone' || h === 'cantieri') { ST.pagina = 'piano'; ST.vista = h }
+  else if (h === 'persone' || h === 'cantieri' || h === 'elenco') { ST.pagina = 'piano'; ST.vista = h }
   else ST.pagina = 'piano'
   try { history.replaceState(hStato(), '', hUrl(hStato())) } catch (e) { /* niente cronologia */ }
 }
@@ -345,8 +349,16 @@ var TABELLE = {
   cantieri: ['cantieri', D.COLONNE_CANTIERI, 'nome'], operai: ['operai', D.COLONNE_OPERAI, 'cognome']
 }
 async function ricarica(nomi) {
-  var r = await Promise.all(nomi.map(function (n) { var t = TABELLE[n]; return D.leggi(t[0], t[1], t[2]) }))
-  nomi.forEach(function (n, i) { ST.dati[n] = r[i] })
+  var r = await Promise.all(nomi.map(function (n) {
+    if (n === 'cantieri') return D.leggiCantieri()          // v14: con il cliente (colonne mancanti → senza)
+    var t = TABELLE[n]; return D.leggi(t[0], t[1], t[2])
+  }))
+  for (var i = 0; i < nomi.length; i++) {
+    if (nomi[i] !== 'cantieri') { ST.dati[nomi[i]] = r[i]; continue }
+    ST.dati.cantieri = r[i].cantieri; ST.dati.senzaCliente = r[i].senzaCliente
+    var cl = await D.leggiClienti(r[i].cantieri)
+    ST.dati.clienti = cl.clienti; ST.dati.erroreClienti = cl.errore
+  }
   ricostruisci()
   disegna()
 }
@@ -428,9 +440,14 @@ function disegna() {
   if (!ST.dati) return
   document.querySelectorAll('[data-vista]').forEach(function (b) { b.setAttribute('aria-pressed', String(ST.pagina === 'piano' && b.dataset.vista === ST.vista)) })
   document.querySelectorAll('[data-zoom]').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.zoom === ST.zoom)) })
-  $('pagina-piano').hidden = ST.pagina !== 'piano'
+  var elenco = ST.pagina === 'piano' && ST.vista === 'elenco'      // v14: la vista «📋 Elenco» non ha zoom né periodo
+  $('pagina-piano').hidden = ST.pagina !== 'piano' || elenco
+  $('pagina-elenco').hidden = !elenco
+  $('gruppo-zoom').hidden = elenco
+  $('gruppo-periodo').hidden = elenco
+  document.body.classList.toggle('vista-elenco', elenco)          // la stampa A4 vale solo qui (css v14)
   $('pagina-impostazioni').hidden = ST.pagina !== 'impostazioni'
-  $('titolo-periodo').textContent = ST.pagina === 'impostazioni' ? 'Impostazioni' : titoloPeriodo()
+  $('titolo-periodo').textContent = ST.pagina === 'impostazioni' ? 'Impostazioni' : elenco ? 'Elenco commesse' : titoloPeriodo()
   var n = ST.avvisi.filter(function (a) { return !a.ignorato }).length
   $('cont-avvisi').textContent = n
   $('cont-avvisi').className = 'contatore' + (n ? '' : ' zero')
@@ -453,7 +470,7 @@ function disegna() {
   var ba = $('barra-archivio')
   ba.hidden = !(ST.pagina === 'piano' && ST.vista === 'persone' && ST.archivio.length)
   ba.innerHTML = ST.archivio.length ? tastoArchivio(ST.archivio.length) : ''
-  if (ST.pagina === 'piano') { disegnaGriglia(); disegnaDaPianificare(); disegnaCoda() } else disegnaImpostazioni()
+  if (ST.pagina === 'piano') { if (elenco) disegnaElenco(); else { disegnaGriglia(); disegnaDaPianificare(); disegnaCoda() } } else disegnaImpostazioni()
 }
 function titoloPeriodo() {
   var iv = C.intervalloVista(ST.zoom, ST.ancora)
@@ -705,6 +722,169 @@ function disegnaCoda() {
       '<strong>🔧 ' + esc(r.numero) + ' ' + esc(r.nome) + '</strong><span class="piccolo-testo">' + fOre(r.oreStimate) + ' stimate' +
       (r.indirizzo ? ' · ' + esc(r.indirizzo) : '') + '</span></div>'
   }).join('')
+}
+
+// ── «📋 Elenco» (v14, Umberto 9.11.2026: «come Programma» di Google Calendar) ──
+// Tutte le commesse di Anagrafiche in righe: stato (icona + parola + colore), numero, lavoro, cliente, località,
+// date del Calendario («senza date» se non ci sono). Ordine per data d'inizio, raggruppate per mese; senza date
+// in fondo. Filtri: stato (di base «Aperte»: senza Perse e Lavori finiti), periodo, persona; la ricerca mentre
+// scrivi trova anche quelle in archivio. I calcoli sono in C.elencoCommesse (calcoli.js), qui solo il disegno.
+// Clic sulla riga: piano → scheda; senza piano → «Pianifica commessa» con la ricerca scritta. «📅 Vai al calendario»
+// porta alla vista Cantieri sul primo giorno, con la riga che lampeggia. Stampa: tabella A4 (css v14, @media print).
+var EL_CHIAVE = 'calendario_elenco_filtri_v1'
+function leggiFiltriElenco() {
+  try { var x = JSON.parse(sessionStorage.getItem(EL_CHIAVE) || 'null'); if (x && typeof x === 'object') Object.assign(ST.elenco, x) } catch (e) { /* niente memoria: filtri di base */ }
+}
+function salvaFiltriElenco() {
+  try { sessionStorage.setItem(EL_CHIAVE, JSON.stringify(ST.elenco)) } catch (e) { /* niente memoria: va bene lo stesso */ }
+}
+function opzioniElenco() {
+  var stato = [['aperte', 'Aperte']]          // = senza Perse e Lavori finiti (lo dice il conteggio sotto)
+    .concat(C.STATI_COMMESSA.map(function (s) { return [s.chiave, s.icona + ' ' + s.parola] }))
+    .concat([['senza', '⚠️ Senza stato o da collegare'], ['tutte', 'Tutte, anche in archivio']])
+  var persone = '<option value="">Tutte le persone</option>'
+  function gruppo(titolo, l) {
+    return l.length ? '<optgroup label="' + esc(titolo) + '">' + l.map(function (p) { return '<option value="' + esc(p.id) + '">' + esc(p.nome) + '</option>' }).join('') + '</optgroup>' : ''
+  }
+  persone += gruppo('Dipendenti', ST.persone) + gruppo('👷 Esterni', ST.esterni) + gruppo('🗄️ Archivio', ST.archivio)
+  return {
+    stato: stato.map(function (x) { return '<option value="' + x[0] + '">' + esc(x[1]) + '</option>' }).join(''),
+    periodo: C.FILTRI_PERIODO.map(function (x) { return '<option value="' + x.k + '">' + esc(x.n) + '</option>' }).join(''),
+    persona: persone
+  }
+}
+function filtriElencoAttivi() {
+  var f = ST.elenco
+  return !!(C.pulito(f.cerca) || f.stato !== 'aperte' || f.periodo !== 'tutto' || f.persona)
+}
+function testoFiltriElenco() {
+  var f = ST.elenco, out = []
+  var so = $('el-stato').selectedOptions[0], po = $('el-periodo').selectedOptions[0], pe = $('el-persona').selectedOptions[0]
+  out.push('Stato: ' + (so ? so.textContent : f.stato))
+  if (f.periodo !== 'tutto') out.push('Periodo: ' + (po ? po.textContent : f.periodo))
+  if (f.persona) out.push('Persona: ' + (pe ? pe.textContent : ''))
+  if (C.pulito(f.cerca)) out.push('Cerca: «' + C.pulito(f.cerca) + '»')
+  return out.join(' · ')
+}
+function datePeriodo(r) {
+  if (!r.dal) return ''
+  return r.dal === r.al ? 'il ' + gAnno(r.dal) : 'dal ' + gAnno(r.dal) + ' al ' + gAnno(r.al)
+}
+function nomiPersone(r) {
+  var n = r.persone.map(function (id) { return ST.nomi[id] || 'Persona sconosciuta' }).sort()
+  return n.length > 4 ? n.slice(0, 4).join(', ') + ' e altre ' + (n.length - 4) : n.join(', ')
+}
+function badgeElenco(r) {
+  if (r.stato.chiave === 'da_collegare') return '<span class="badge-stato senza sc-da_collegare">' + r.stato.icona + ' ' + esc(r.stato.parola) + '</span>'
+  return badgeStato(r.cantiere ? r.cantiere.stato_commessa : null)
+}
+function rigaElenco(r) {
+  var p = r.piano, k = r.cantiere
+  var cliente = r.cliente
+    ? '<span class="el-cliente' + (r.clienteStato === 'non_leggibile' ? ' el-manca' : '') + '">👤 ' + esc(r.cliente) + '</span>'
+    : '<span class="el-cliente el-manca">👤 cliente non indicato</span>'
+  var loc = r.localita ? '<span class="el-loc">📍 ' + esc(r.localita) + '</span>' : '<span class="el-loc el-manca">📍 località non indicata</span>'
+  var quando
+  if (r.dal) quando = '<span class="el-date">📅 ' + datePeriodo(r) + '</span>' + (r.persone.length ? '<span class="el-persone">👷 ' + esc(nomiPersone(r)) + '</span>' : '')
+  else quando = '<span class="el-date el-senza">🗓️ senza date</span><span class="el-dove">' +
+    (r.coda ? '🔧 riparazione in coda' : p ? 'piano aperto, senza giorni' : r.archivio ? 'non si pianifica' : 'non ancora nel Calendario') + '</span>'
+  var testa = '<span class="el-r1">' + badgeElenco(r) + (r.archivio ? ' <span class="el-archivio">🗄️ in archivio</span>' : '') +
+    ' <span class="num">' + esc(r.numero || 'senza numero') + '</span> <strong class="el-nome">' + esc(r.nome) + '</strong></span>' +
+    '<span class="el-r2">' + cliente + loc + '</span><span class="el-r3">' + quando + '</span>'
+  var apri = p || (k && !r.archivio)
+  var h = '<div class="el-riga' + (r.archivio ? ' archivio' : '') + '" data-el="' + esc(r.chiave) + '"' + (r.dal ? ' data-dal="' + r.dal + '"' : '') + '>'
+  h += apri
+    ? '<button type="button" class="el-apri"' + (p ? ' data-el-piano="' + esc(p.id) + '"' : ' data-el-cantiere="' + esc(k.id) + '"') + '>' + testa + '</button>'
+    : '<div class="el-apri sola">' + testa + '</div>'
+  if (p && r.dal) h += '<button type="button" class="el-vai" data-el-vai="' + esc(p.id) + '">📅 Vai al calendario</button>'
+  return h + '</div>'
+}
+function rigaStampa(r) {
+  var dove = [r.cliente || 'cliente non indicato', r.localita].filter(Boolean)
+  return '<tr><td class="st-stato">' + esc(r.stato.icona + ' ' + r.stato.parola) + '</td><td class="st-num">' + esc(r.numero || '–') + '</td>' +
+    '<td><strong>' + esc(r.nome) + '</strong><br>' + esc(dove.join(' · ')) + '</td>' +
+    '<td class="st-date">' + (r.dal ? esc(r.dal === r.al ? C.fmtDataAnno(r.dal) : C.fmtDataAnno(r.dal) + ' – ' + C.fmtDataAnno(r.al)) : 'senza date') + '</td></tr>'
+}
+function disegnaElenco() {
+  if (!ST.dati || !$('el-lista')) return
+  var op = opzioniElenco()
+  ;[['el-stato', op.stato, 'stato'], ['el-periodo', op.periodo, 'periodo'], ['el-persona', op.persona, 'persona']].forEach(function (x) {
+    var s = $(x[0])
+    if (s.dataset.opz !== x[1]) { s.innerHTML = x[1]; s.dataset.opz = x[1] }
+    s.value = ST.elenco[x[2]]
+    if (s.value !== ST.elenco[x[2]]) { ST.elenco[x[2]] = s.options[0].value; s.value = ST.elenco[x[2]] }   // persona che non c'è più
+  })
+  if ($('el-cerca').value !== ST.elenco.cerca) $('el-cerca').value = ST.elenco.cerca
+  var escludi = {}; ST.coda.forEach(function (r) { escludi[r.id] = 1 })
+  var e = C.elencoCommesse({
+    cantieri: ST.dati.cantieri, commesse: ST.dati.commesse, assegnazioni: ST.dati.assegnazioni, clienti: ST.dati.clienti,
+    oggi: C.oggiIso(), coda: escludi, stato: ST.elenco.stato, periodo: ST.elenco.periodo, persona: ST.elenco.persona, cerca: ST.elenco.cerca
+  })
+  var h = ''
+  // Zero commesse da Anagrafiche: non può essere (ce ne sono sempre). È un errore a schermo, mai un elenco vuoto muto.
+  if (!e.nCommesse) h += '<div class="esito ko" id="el-zero">Nessuna commessa letta da Anagrafiche (0 righe dalla tabella cantieri). ' +
+    'Se in Anagrafiche ci sono commesse, il database non le dà a questo utente: esci, rientra e riprova. L\'elenco qui sotto NON è attendibile.</div>'
+  if (ST.dati.senzaCliente) h += '<div class="esito attenzione">👤 ' + esc(ST.dati.senzaCliente) + '</div>'
+  if (ST.dati.erroreClienti) h += '<div class="esito attenzione">👤 ' + esc(ST.dati.erroreClienti) + ' Accanto a quelle commesse c’è scritto «' + esc(C.CLIENTE_NON_LEGGIBILE) + '».</div>'
+  e.gruppi.forEach(function (g) {
+    h += '<section class="el-gruppo" data-mese="' + g.chiave + '"><h3 class="el-mese">' + esc(g.titolo) + (g.questoMese ? ' <span class="el-questo">· questo mese</span>' : '') +
+      ' <span class="el-n">(' + g.righe.length + ')</span></h3>' + g.righe.map(rigaElenco).join('') + '</section>'
+  })
+  if (e.senzaDate.length) h += '<section class="el-gruppo el-gruppo-senza" data-mese="senza"><h3 class="el-mese">🗓️ Senza date · da pianificare <span class="el-n">(' + e.senzaDate.length + ')</span></h3>' +
+    '<p class="aiuto">Commesse senza giorni nel Calendario. Prima i lavori, poi quelle senza stato, poi le offerte.</p>' + e.senzaDate.map(rigaElenco).join('') + '</section>'
+  if (!e.righe.length && e.nCommesse) h += '<div class="esito attenzione" id="el-vuoto">Nessuna commessa con questi filtri.' +
+    (filtriElencoAttivi() ? ' Premi «✖️ Togli i filtri».' : '') + '</div>'
+  $('el-lista').innerHTML = h
+  var conta = e.righe.length + (e.righe.length === 1 ? ' commessa' : ' commesse') + ' in elenco · ' +
+    (e.righe.length - e.senzaDate.length) + ' con date · ' + e.senzaDate.length + ' senza date'
+  if (e.nArchivioNascoste) conta += ' · 🗄️ ' + e.nArchivioNascoste + ' in archivio (Persa / Lavoro finito) non mostrate: cercale o scegli «Tutte»'
+  $('el-conta').textContent = conta
+  $('el-pulisci').hidden = !filtriElencoAttivi()
+  // Tabella per la stampa A4 (si vede solo stampando). La testata si ripete su ogni pagina.
+  var oggi = C.oggiIso()
+  var t = '<thead><tr><th colspan="4" class="st-testa">Carpenteria Ticinese Sagl · Calendario · Elenco commesse · stampato il ' + C.fmtDataAnno(oggi) +
+    '<br><span class="st-filtri">' + esc(testoFiltriElenco()) + ' · ' + e.righe.length + (e.righe.length === 1 ? ' commessa' : ' commesse') + '</span></th></tr>' +
+    '<tr><th>Stato</th><th>N.</th><th>Commessa · cliente · località</th><th>Date</th></tr></thead>'
+  e.gruppi.forEach(function (g) {
+    // il titolo del mese sta con la prima riga (mai da solo in fondo alla pagina)
+    t += '<tbody class="st-inizio"><tr class="st-mese"><th colspan="4">' + esc(g.titolo) + '</th></tr>' + rigaStampa(g.righe[0]) + '</tbody>'
+    if (g.righe.length > 1) t += '<tbody>' + g.righe.slice(1).map(rigaStampa).join('') + '</tbody>'
+  })
+  if (e.senzaDate.length) {
+    t += '<tbody class="st-inizio"><tr class="st-mese"><th colspan="4">Senza date · da pianificare</th></tr>' + rigaStampa(e.senzaDate[0]) + '</tbody>'
+    if (e.senzaDate.length > 1) t += '<tbody>' + e.senzaDate.slice(1).map(rigaStampa).join('') + '</tbody>'
+  }
+  if (!e.righe.length) t += '<tbody><tr><td colspan="4">Nessuna commessa con questi filtri.</td></tr></tbody>'
+  $('el-stampa-tab').innerHTML = t
+}
+function vaiAlCalendario(pianoId) {
+  var r = (ST.assPer[pianoId] || []).map(function (a) { return a.data }).sort()
+  if (!r.length) return
+  ST.ancora = r[0]
+  naviga('piano', 'cantieri')
+  var tr = document.querySelector('tr[data-riga="' + pianoId + '"]')
+  if (tr) { tr.classList.add('lampeggia'); tr.scrollIntoView({ block: 'center' }); setTimeout(function () { tr.classList.remove('lampeggia') }, 2600) }
+}
+function collegaElenco() {
+  leggiFiltriElenco()
+  $('el-cerca').addEventListener('input', function () { ST.elenco.cerca = $('el-cerca').value; salvaFiltriElenco(); disegnaElenco() })
+  ;[['el-stato', 'stato'], ['el-periodo', 'periodo'], ['el-persona', 'persona']].forEach(function (x) {
+    $(x[0]).addEventListener('change', function () { ST.elenco[x[1]] = $(x[0]).value; salvaFiltriElenco(); disegnaElenco() })
+  })
+  $('el-pulisci').addEventListener('click', function () {
+    ST.elenco = { cerca: '', stato: 'aperte', periodo: 'tutto', persona: '' }
+    salvaFiltriElenco(); disegnaElenco(); $('el-cerca').focus()
+  })
+  $('el-stampa').addEventListener('click', function () { disegnaElenco(); window.print() })
+  $('el-lista').addEventListener('click', function (e) {
+    var v = e.target.closest('[data-el-vai]')
+    if (v) { vaiAlCalendario(v.dataset.elVai); return }
+    var b = e.target.closest('.el-apri[data-el-piano], .el-apri[data-el-cantiere]')
+    if (!b) return
+    if (b.dataset.elPiano) { apriCommessa(b.dataset.elPiano); return }
+    var k = ST.dati.cantieri.find(function (x) { return x.id === b.dataset.elCantiere })
+    if (k) esegui(function () { return apriPianifica({ cerca: C.pulito(k.numero_commessa) || C.pulito(k.nome) }) })
+  })
 }
 
 // ── Trascinare (PC) ─────────────────────────────────────────────────────────
@@ -2481,6 +2661,7 @@ function collegaBarra() {
   $('coda-lista').addEventListener('click', function (e) {
     var cc = e.target.closest('[data-commessa]'); if (cc) apriCommessa(cc.dataset.commessa)
   })
+  collegaElenco()                 // v14: vista «📋 Elenco»
   $('coda-lista').addEventListener('keydown', function (e) {
     if (e.key !== 'Enter') return
     var cc = e.target.closest('[data-commessa]'); if (cc) apriCommessa(cc.dataset.commessa)

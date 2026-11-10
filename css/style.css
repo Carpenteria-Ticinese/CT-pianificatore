@@ -436,3 +436,74 @@ button.carta-dp.chiusa { border-left-color: var(--border); opacity: .75; cursor:
   #coda { max-height: none; }
   #contenitore-griglia { max-height: calc(70vh - var(--ct-agg-h, 0px)); }
 }
+
+/* ── Versione 14: vista «📋 Elenco» (tutte le commesse in righe, come «Programma» di Google Calendar) ──
+   Righe grandi da toccare coi guanti, stato sempre icona + parola + colore, a 375 px tutto va a capo
+   (niente scorrimento di lato). Stampa: tabella A4 verticale, margini ≥ 8 mm, al 100 % (solo in questa vista). */
+#pagina-elenco { padding: 12px; max-width: 1100px; margin: 0 auto; }
+.el-testa { background: var(--surface); border: 2px solid var(--border-lt); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 12px; }
+.el-testa h2 { margin: 0 0 4px; }
+.el-filtri { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 14px; }
+.el-campo { display: flex; flex-direction: column; gap: 3px; flex: 1 1 200px; min-width: 0; }
+.el-campo-cerca { flex: 2 1 300px; }
+.el-campo input, .el-campo select { width: 100%; min-height: 48px; font-size: 1rem; }
+.el-tasti { display: flex; flex-wrap: wrap; gap: 8px; }
+.el-tasti button { min-height: 48px; }
+.el-conta { margin: 10px 0 0; color: var(--text2); font-weight: 600; overflow-wrap: anywhere; }
+.el-gruppo { margin: 0 0 16px; }
+.el-mese { margin: 0 0 8px; padding: 6px 12px; background: var(--primary-lt); border-left: 8px solid var(--primary); border-radius: var(--radius); font-size: 1.15rem; }
+.el-gruppo-senza .el-mese { background: #eef0f3; border-left-color: #6b7280; }
+.el-questo { color: var(--primary-hi); }
+.el-n { font-weight: 400; color: var(--text2); }
+.el-riga { display: flex; flex-wrap: wrap; gap: 8px; align-items: stretch; margin-bottom: 8px; }
+.el-apri { flex: 1 1 320px; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-height: 64px; padding: 10px 12px;
+  text-align: left; white-space: normal; border: 2px solid var(--border); border-left: 10px solid var(--primary); border-radius: var(--radius); background: #fff; overflow-wrap: anywhere; }
+button.el-apri:hover { background: var(--primary-lt); }
+.el-apri.sola { cursor: default; }
+.el-riga.archivio .el-apri { border-left-color: #6b7280; background: #f8fafc; }
+.el-r1 { font-size: 1.05rem; }
+.el-r1 .num { font-weight: 700; white-space: nowrap; }
+.el-r2, .el-r3 { display: flex; flex-wrap: wrap; gap: 2px 14px; color: var(--text2); font-size: 1rem; }
+.el-date { font-weight: 700; color: var(--text); }
+.el-senza { color: var(--warn); }
+.el-manca { font-style: italic; color: var(--text3); }
+.el-archivio { display: inline-block; padding: 0 8px; border: 2px solid #475569; border-radius: 999px; background: #e2e8f0; color: #1e293b; font-weight: 700; font-size: .9rem; }
+.badge-stato.sc-da_collegare { border-color: var(--warn); background: var(--warn-bg); color: var(--warn); }
+button.el-vai { flex: 0 0 auto; min-height: 48px; align-self: center; font-weight: 600; white-space: normal; }
+table.el-stampa { display: none; }
+@media (max-width: 600px) {
+  #pagina-elenco { padding: 8px; }
+  .el-campo, .el-campo-cerca { flex: 1 1 100%; }
+  .el-tasti { width: 100%; }
+  .el-tasti button { flex: 1 1 0; white-space: normal; }
+  .el-apri { flex: 1 1 100%; }
+  button.el-vai { flex: 1 1 100%; }
+  .segmenti { flex-wrap: wrap; }
+}
+
+/* Stampa dell'Elenco (Umberto 9.11.2026): A4 verticale, margini ≥ 8 mm (qui 10–16 mm), al 100 % («Dimensioni effettive»).
+   Ditta, data e filtri nella testata della tabella, ripetuta su ogni pagina; «Pagina N di M» in basso a destra. */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 10mm 10mm 16mm 10mm;
+    @bottom-right { content: "Pagina " counter(page) " di " counter(pages); font: 9pt -apple-system, 'Segoe UI', sans-serif; vertical-align: top; padding-top: 2mm; }
+  }
+  body.vista-elenco { background: #fff; }
+  body.vista-elenco #barra, body.vista-elenco .striscia-avviso, body.vista-elenco #barra-archivio, body.vista-elenco #pagina-piano,
+  body.vista-elenco #pagina-impostazioni, body.vista-elenco #toast, body.vista-elenco .sfondo-modale, body.vista-elenco #ct-aggiorna,
+  body.vista-elenco .el-testa, body.vista-elenco #el-lista { display: none !important; }
+  body.vista-elenco #pagina-elenco { padding: 0; max-width: none; margin: 0; }
+  body.vista-elenco table.el-stampa { display: table; width: 100%; border-collapse: collapse; font-size: 10pt; line-height: 1.3; color: #000; }
+  .el-stampa thead { display: table-header-group; }
+  .el-stampa th, .el-stampa td { border-bottom: 0.3mm solid #999; padding: 1.2mm 1.5mm; text-align: left; vertical-align: top; }
+  .el-stampa thead th { background: #eee; }
+  .el-stampa th.st-testa { background: #fff; font-size: 11pt; border-bottom: 0.5mm solid #000; }
+  .el-stampa .st-filtri { font-weight: 400; font-size: 9pt; }
+  .el-stampa tr.st-mese th { background: #e8f5ee; font-size: 10.5pt; }
+  .el-stampa td.st-stato { width: 30mm; }
+  .el-stampa td.st-num { width: 16mm; white-space: nowrap; font-weight: 700; }
+  .el-stampa td.st-date { width: 46mm; }
+  .el-stampa tr { break-inside: avoid; }
+  .el-stampa tbody.st-inizio { break-inside: avoid; }
+}
